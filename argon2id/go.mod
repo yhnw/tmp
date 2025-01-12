@@ -1,4 +1,4 @@
-module github.com/yhnw/argon2id
+module github.com/yhnw/tmp/argon2id
 
 go 1.23.4
 
