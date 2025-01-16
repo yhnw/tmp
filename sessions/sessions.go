@@ -53,8 +53,8 @@ type Record struct {
 }
 
 // New returns a new instance of Session with default settings.
-func New[T any]() Session[T] {
-	return Session[T]{
+func New[T any]() *Session[T] {
+	return &Session[T]{
 		IdleTimeout:     24 * time.Hour,
 		AbsoluteTimeout: 7 * 24 * time.Hour,
 		CleanupInterval: 1 * time.Hour,
