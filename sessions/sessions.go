@@ -346,7 +346,7 @@ func (m *Middleware[T]) Get(ctx context.Context) *T {
 	return r.session.(*T)
 }
 
-func (m *Middleware[T]) Token(ctx context.Context) string {
+func (m *Middleware[T]) ID(ctx context.Context) string {
 	r := m.recordFromContext(ctx)
 	return r.ID
 }
