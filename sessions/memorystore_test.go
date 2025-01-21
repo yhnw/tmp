@@ -7,13 +7,13 @@ import (
 )
 
 var validRecord = &Record{
-	Token:            "valid",
+	ID:               "valid",
 	IdleDeadline:     time.Now().Add(24 * time.Hour),
 	AbsoluteDeadline: time.Now().Add(24 * time.Hour * 365),
 }
 
 var expiredRecord = &Record{
-	Token:            "expired",
+	ID:               "expired",
 	IdleDeadline:     time.Time{},
 	AbsoluteDeadline: time.Time{},
 }
@@ -72,7 +72,7 @@ func TestMemoryStoreSave(t *testing.T) {
 			if err := store.Save(ctx, tt.record); err != nil {
 				t.Fatal(err)
 			}
-			got, err := store.Load(ctx, tt.record.Token)
+			got, err := store.Load(ctx, tt.record.ID)
 			if err != nil {
 				t.Fatal(err)
 			}

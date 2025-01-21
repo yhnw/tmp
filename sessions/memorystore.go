@@ -30,7 +30,7 @@ func (s *memoryStore) Save(_ context.Context, r *Record) error {
 		return nil
 	}
 	s.mu.Lock()
-	s.m[r.Token] = r
+	s.m[r.ID] = r
 	s.mu.Unlock()
 	return nil
 }

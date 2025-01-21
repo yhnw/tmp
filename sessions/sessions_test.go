@@ -20,9 +20,8 @@ type testSession struct {
 
 func TestMiddleware(t *testing.T) {
 	ctx := context.Background()
-	session := New[testSession]()
-	mw := session.Middleware(ctx)
-	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	session := NewMiddleware(ctx, Config[testSession]{})
+	h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.RequestURI {
 		case "/increment":
 			session.Get(r.Context()).N++
@@ -51,7 +50,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 1,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.Store.Load(ctx, new.Value); err != nil {
+				if r, err := session.store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -62,7 +61,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 2,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.Store.Load(ctx, new.Value); err != nil {
+				if r, err := session.store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -73,10 +72,10 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/renew", nil),
 			want: 2,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.Store.Load(ctx, old.Value); !(r == nil && err == nil) {
+				if r, err := session.store.Load(ctx, old.Value); !(r == nil && err == nil) {
 					t.Fatal("old session found after renew")
 				}
-				if r, err := session.Store.Load(ctx, new.Value); err != nil {
+				if r, err := session.store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -87,7 +86,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 3,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.Store.Load(ctx, new.Value); err != nil {
+				if r, err := session.store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -100,7 +99,7 @@ func TestMiddleware(t *testing.T) {
 				if new.MaxAge != -1 {
 					t.Fatal("want MaxAge == -1")
 				}
-				if r, err := session.Store.Load(ctx, old.Value); !(r == nil && err == nil) {
+				if r, err := session.store.Load(ctx, old.Value); !(r == nil && err == nil) {
 					t.Fatal("session found after delete")
 				}
 			},
@@ -109,7 +108,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 1,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.Store.Load(ctx, new.Value); err != nil {
+				if r, err := session.store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -126,7 +125,7 @@ func TestMiddleware(t *testing.T) {
 		resp := w.Result()
 		old := cookie
 		for _, c := range resp.Cookies() {
-			if c.Name == session.Cookie.Name {
+			if c.Name == session.cookie.Name {
 				cookie = c
 				break
 			}
