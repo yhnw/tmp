@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -23,6 +25,8 @@ type Session[T any] struct {
 	Store        Store
 	Codec        Codec[T]
 	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
+
+	activeSession sync.Map // string -> struct{}
 }
 
 // Store is the interface that stores session records.
@@ -86,17 +90,25 @@ func (s *Session[T]) Middleware(ctx context.Context) func(next http.Handler) htt
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx, err := r.Context(), (error)(nil)
+			token := ""
 			if cookies := r.CookiesNamed(s.Cookie.Name); len(cookies) == 1 {
-				ctx, err = s.loadOrCreate(ctx, cookies[0].Value)
-				if err != nil {
-					s.ErrorHandler(w, r, err)
-					return
-				}
-			} else {
-				ctx = s.create(ctx)
+				token = cookies[0].Value
 			}
+			record, err := s.loadOrCreate(r.Context(), token)
+			if err != nil {
+				s.ErrorHandler(w, r, err)
+				return
+			}
+
+			if _, exits := s.activeSession.LoadOrStore(record.Token, struct{}{}); exits {
+				s.ErrorHandler(w, r, errors.New("another active session exists"))
+				return
+			}
+			defer s.activeSession.Delete(record.Token)
+
+			ctx := newContextWithRecord(r.Context(), record)
 			r = r.WithContext(ctx)
+
 			sw := &sessionWriter[T]{
 				ResponseWriter: w,
 				req:            r,
@@ -174,19 +186,22 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 
-func (s *Session[T]) loadOrCreate(ctx context.Context, token string) (context.Context, error) {
+func (s *Session[T]) loadOrCreate(ctx context.Context, token string) (*Record, error) {
+	if token == "" {
+		return s.newRecord(), nil
+	}
 	r, err := s.Store.Load(ctx, token)
 	if err != nil {
 		return nil, err
 	} else if r == nil {
 		// not found
-		return s.create(ctx), nil
+		return s.newRecord(), nil
 	}
 
 	if r.session, err = s.Codec.Decode(r.Data); err != nil {
 		return nil, err
 	}
-	return newContextWithRecord(ctx, r), nil
+	return r, nil
 }
 
 func (s *Session[T]) save(ctx context.Context, w http.ResponseWriter) (err error) {
@@ -222,13 +237,13 @@ func (s *Session[T]) save(ctx context.Context, w http.ResponseWriter) (err error
 	return nil
 }
 
-func (s *Session[T]) create(ctx context.Context) context.Context {
+func (s *Session[T]) newRecord() *Record {
 	r := &Record{
 		Token:            randomToken(),
 		AbsoluteDeadline: time.Now().Add(s.AbsoluteTimeout),
 		session:          new(T),
 	}
-	return newContextWithRecord(ctx, r)
+	return r
 }
 
 func (s *Session[T]) Get(ctx context.Context) *T {
@@ -254,6 +269,7 @@ func (s *Session[T]) Renew(ctx context.Context) error {
 	return s.renewToken(ctx, randomToken())
 }
 
+// It is caller's responsibility to choose a unique token.
 func (s *Session[T]) RenewToken(ctx context.Context, token string) error {
 	return s.renewToken(ctx, token)
 }
