@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// defined in stdlib
+// defined in net/http
 type rwUnwrapper interface {
 	Unwrap() http.ResponseWriter
 }
@@ -50,7 +50,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 1,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.store.Load(ctx, new.Value); err != nil {
+				if r, err := session.cfg.Store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -61,7 +61,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 2,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.store.Load(ctx, new.Value); err != nil {
+				if r, err := session.cfg.Store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -72,10 +72,10 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/renew", nil),
 			want: 2,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.store.Load(ctx, old.Value); !(r == nil && err == nil) {
+				if r, err := session.cfg.Store.Load(ctx, old.Value); !(r == nil && err == nil) {
 					t.Fatal("old session found after renew")
 				}
-				if r, err := session.store.Load(ctx, new.Value); err != nil {
+				if r, err := session.cfg.Store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -86,7 +86,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 3,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.store.Load(ctx, new.Value); err != nil {
+				if r, err := session.cfg.Store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -99,7 +99,7 @@ func TestMiddleware(t *testing.T) {
 				if new.MaxAge != -1 {
 					t.Fatal("want MaxAge == -1")
 				}
-				if r, err := session.store.Load(ctx, old.Value); !(r == nil && err == nil) {
+				if r, err := session.cfg.Store.Load(ctx, old.Value); !(r == nil && err == nil) {
 					t.Fatal("session found after delete")
 				}
 			},
@@ -108,7 +108,7 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 1,
 			check: func(t *testing.T, want int, old, new *http.Cookie) {
-				if r, err := session.store.Load(ctx, new.Value); err != nil {
+				if r, err := session.cfg.Store.Load(ctx, new.Value); err != nil {
 					t.Fatal(err)
 				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
@@ -125,11 +125,28 @@ func TestMiddleware(t *testing.T) {
 		resp := w.Result()
 		old := cookie
 		for _, c := range resp.Cookies() {
-			if c.Name == session.cookie.Name {
+			if c.Name == session.cfg.Cookie.Name {
 				cookie = c
 				break
 			}
 		}
 		tt.check(t, tt.want, old, cookie)
 	}
+}
+
+func TestMiddlewarePanic(t *testing.T) {
+	defer func() {
+		if err := recover(); err == nil {
+			t.Error("should panic")
+		}
+	}()
+
+	ctx := context.Background()
+	session := NewMiddleware(ctx, Config[testSession]{})
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = session.Get(r.Context())
+	})
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
 }
