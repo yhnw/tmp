@@ -15,10 +15,10 @@ func newMemoryStore() *memoryStore {
 	return &memoryStore{m: make(map[string]*Record)}
 }
 
-func (s *memoryStore) Load(_ context.Context, token string) (*Record, error) {
+func (s *memoryStore) Load(_ context.Context, id string) (*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	r, ok := s.m[token]
+	r, ok := s.m[id]
 	if !ok || time.Now().After(r.IdleDeadline) {
 		return nil, nil
 	}
@@ -35,9 +35,9 @@ func (s *memoryStore) Save(_ context.Context, r *Record) error {
 	return nil
 }
 
-func (s *memoryStore) Delete(_ context.Context, token string) error {
+func (s *memoryStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
-	delete(s.m, token)
+	delete(s.m, id)
 	s.mu.Unlock()
 	return nil
 }

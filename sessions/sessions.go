@@ -43,6 +43,8 @@ type Store interface {
 
 	// DeleteExpired deletes all expired session records.
 	DeleteExpired(ctx context.Context) error
+
+	// All(ctx context.Context) ([]*Record, error)
 }
 
 // Record holds information about an HTTP session.
@@ -83,9 +85,10 @@ func cleanupInterval(ctx context.Context, store Store, interval time.Duration) {
 type Middleware[T any] struct {
 	cfg           Config[T]
 	activeSession sync.Map // string -> struct{}
+	now           func() time.Time
 }
 
-// NewMiddleware returns a new instance of Middleware with default settings.
+// NewMiddleware returns a new instance of [Middleware] with default settings.
 func NewMiddleware[T any](ctx context.Context, cfg Config[T]) *Middleware[T] {
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = 24 * time.Hour
@@ -112,7 +115,7 @@ func NewMiddleware[T any](ctx context.Context, cfg Config[T]) *Middleware[T] {
 		Partitioned: cmp.Or(cfg.Cookie.Partitioned, false),
 	}
 	cleanupInterval(ctx, cfg.Store, cfg.CleanupInterval)
-	return &Middleware[T]{cfg: cfg}
+	return &Middleware[T]{cfg: cfg, now: time.Now}
 }
 
 // Middleware returns a middleware that automatically tracks HTTP sessions.
@@ -132,7 +135,7 @@ func (m *Middleware[T]) Wrap(next http.Handler) http.Handler {
 		}
 
 		if _, exits := m.activeSession.LoadOrStore(record.ID, struct{}{}); exits {
-			m.cfg.ErrorHandler(w, r, errors.New("another active session exists"))
+			m.cfg.ErrorHandler(w, r, errors.New("active session alreadly exists"))
 			return
 		}
 		defer m.activeSession.Delete(record.ID)
@@ -146,8 +149,12 @@ func (m *Middleware[T]) Wrap(next http.Handler) http.Handler {
 			mw:             m,
 		}
 		next.ServeHTTP(sw, r)
+
 		if !sw.saved && !sw.failed {
-			panic("unreachable")
+			if _, err := m.saveRecord(r.Context()); err != nil {
+				m.cfg.ErrorHandler(w, r, err)
+			}
+			// panic("unreachable")
 		}
 	})
 }
@@ -239,8 +246,11 @@ func (m *Middleware[T]) loadOrCreate(ctx context.Context, id string) (*Record, e
 	return r, nil
 }
 
-func (m *Middleware[T]) save(ctx context.Context, w http.ResponseWriter) (err error) {
-	r := m.recordFromContext(ctx)
+func (m *Middleware[T]) save(ctx context.Context, w http.ResponseWriter) error {
+	r, err := m.saveRecord(ctx)
+	if err != nil {
+		return err
+	}
 
 	if r.session == nil {
 		// Delete was called; delete the cookie
@@ -250,31 +260,37 @@ func (m *Middleware[T]) save(ctx context.Context, w http.ResponseWriter) (err er
 		return nil
 	}
 
-	r.IdleDeadline = time.Now().Add(m.cfg.IdleTimeout)
+	cookie := m.cfg.Cookie
+	cookie.Value = r.ID
+	cookie.MaxAge = int(r.IdleDeadline.Sub(m.now()).Seconds())
+	http.SetCookie(w, &cookie)
+	return nil
+}
+
+// If session was deleted, it returns record (session == nil) and nil.
+func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
+	r := m.recordFromContext(ctx)
+	if r.session == nil {
+		// session was deleted
+		return r, nil
+	}
+
+	r.IdleDeadline = m.now().Add(m.cfg.IdleTimeout)
 	if r.AbsoluteDeadline.Before(r.IdleDeadline) {
 		r.IdleDeadline = r.AbsoluteDeadline
 	}
 
-	cookie := m.cfg.Cookie
-	cookie.Value = r.ID
-	cookie.MaxAge = int(time.Until(r.IdleDeadline).Seconds())
-
 	if r.Data, err = m.cfg.Codec.Encode(r.session.(*T)); err != nil {
-		return err
+		return nil, err
 	}
 
-	if err = m.cfg.Store.Save(ctx, r); err != nil {
-		return err
-	}
-
-	http.SetCookie(w, &cookie)
-	return nil
+	return r, m.cfg.Store.Save(ctx, r)
 }
 
 func (m *Middleware[T]) newRecord() *Record {
 	r := &Record{
 		ID:               randomText(),
-		AbsoluteDeadline: time.Now().Add(m.cfg.AbsoluteTimeout),
+		AbsoluteDeadline: m.now().Add(m.cfg.AbsoluteTimeout),
 		session:          new(T),
 	}
 	return r
@@ -282,6 +298,9 @@ func (m *Middleware[T]) newRecord() *Record {
 
 func (m *Middleware[T]) Get(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
+	if r.session == nil {
+		panic("session alreadly deleted")
+	}
 	return r.session.(*T)
 }
 
@@ -316,6 +335,6 @@ func (m *Middleware[T]) renewID(ctx context.Context, id string) error {
 	}
 
 	r.ID = id
-	r.AbsoluteDeadline = time.Now().Add(m.cfg.AbsoluteTimeout)
+	r.AbsoluteDeadline = m.now().Add(m.cfg.AbsoluteTimeout)
 	return nil
 }

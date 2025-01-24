@@ -21,31 +21,27 @@ var expiredRecord = &Record{
 func testStore(t *testing.T) *memoryStore {
 	t.Helper()
 	store := newMemoryStore()
-
-	if err := store.Save(context.Background(), validRecord); err != nil {
-		t.Fatalf("testStore: %v", err)
-	}
-	if err := store.Save(context.Background(), expiredRecord); err != nil {
-		t.Fatalf("testStore: %v", err)
-	}
+	store.m[validRecord.ID] = validRecord
+	store.m[expiredRecord.ID] = expiredRecord
 	return store
 }
 
 func TestMemoryStoreLoad(t *testing.T) {
-	store := testStore(t)
 	ctx := context.Background()
 
 	tests := []struct {
-		token string
+		id string
 		want  *Record
 	}{
-		{"valid", validRecord},
-		{"expired", nil},
+		{validRecord.ID, validRecord},
+		{expiredRecord.ID, nil},
 		{"missing", nil},
 	}
+
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
-			r, err := store.Load(ctx, tt.token)
+			store := testStore(t)
+			r, err := store.Load(ctx, tt.id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -57,7 +53,6 @@ func TestMemoryStoreLoad(t *testing.T) {
 }
 
 func TestMemoryStoreSave(t *testing.T) {
-	store := newMemoryStore()
 	ctx := context.Background()
 
 	tests := []struct {
@@ -67,8 +62,10 @@ func TestMemoryStoreSave(t *testing.T) {
 		{validRecord, validRecord},
 		{expiredRecord, nil},
 	}
+
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
+			store := newMemoryStore()
 			if err := store.Save(ctx, tt.record); err != nil {
 				t.Fatal(err)
 			}
@@ -84,22 +81,24 @@ func TestMemoryStoreSave(t *testing.T) {
 }
 
 func TestMemoryStoreDelete(t *testing.T) {
-	store := testStore(t)
 	ctx := context.Background()
 
 	tests := []struct {
-		token string
+		id string
 		want  *Record
 	}{
-		{"valid", nil},
+		{validRecord.ID, nil},
+		{expiredRecord.ID, nil},
 		{"missing", nil},
 	}
+
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
-			if err := store.Delete(ctx, tt.token); err != nil {
+			store := testStore(t)
+			if err := store.Delete(ctx, tt.id); err != nil {
 				t.Fatal(err)
 			}
-			if r, _ := store.Load(ctx, tt.token); r != tt.want {
+			if r, _ := store.Load(ctx, tt.id); r != tt.want {
 				t.Fatalf("got %v; want %v", r, tt.want)
 			}
 		})
@@ -107,22 +106,23 @@ func TestMemoryStoreDelete(t *testing.T) {
 }
 
 func TestMemoryStoreDeleteExpired(t *testing.T) {
-	store := testStore(t)
 	ctx := context.Background()
 
 	tests := []struct {
-		token string
+		id string
 		want  *Record
 	}{
-		{"valid", validRecord},
-		{"expired", nil},
+		{validRecord.ID, validRecord},
+		{expiredRecord.ID, nil},
 	}
+
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
+			store := testStore(t)
 			if err := store.DeleteExpired(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if r, _ := store.Load(ctx, tt.token); r != tt.want {
+			if r, _ := store.Load(ctx, tt.id); r != tt.want {
 				t.Fatalf("got %v; want %v", r, tt.want)
 			}
 		})
