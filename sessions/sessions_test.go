@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -262,6 +263,13 @@ func (f funcStore) DeleteExpired(ctx context.Context) error {
 	return f.DeleteExpiredFunc(ctx)
 }
 
+// type writeChecker struct {
+// 	writeCalled       bool
+// 	writeHeaderCalled bool
+// }
+
+// func (writeChecker) Header() http.Header { return nil }
+
 func TestRenewDelete(t *testing.T) {
 	var store funcStore
 	called := false
@@ -286,5 +294,45 @@ func TestID(t *testing.T) {
 	ctx = session.newContextWithRecord(ctx, r)
 	if got := session.ID(ctx); got != "id" {
 		t.Errorf("got %v; want id", got)
+	}
+}
+
+func TestCleanupNoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, interval := range []time.Duration{-1, 0} {
+		if started := cleanup(ctx, nil, interval, defaultErrorHandler     ); started {
+			t.Errorf("cleanup goroutine started with interval = %v", interval)
+		}
+	}
+}
+
+func TestCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if started := cleanup(ctx, nil, 10*time.Second, defaultErrorHandler); !started {
+		t.Errorf("cleanup gorountine has not been started")
+	}
+}
+
+func TestCleanupDelete(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var store funcStore
+	called := false
+	once := sync.OnceFunc(func() { called = true })
+	store.DeleteExpiredFunc = func(ctx context.Context) error {
+		once()
+		return nil
+	}
+
+	if started := cleanup(ctx, store, 1, defaultErrorHandler); !started {
+		t.Errorf("cleanup gorountine has not been started")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !called {
+		t.Error("DeleteExpired was not called")
 	}
 }

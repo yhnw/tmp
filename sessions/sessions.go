@@ -30,7 +30,7 @@ type Config[T any] struct {
 
 // Store is the interface that stores session records.
 type Store interface {
-	// Load loads a session record associated with token.
+	// Load loads a session record associated with id.
 	// If found, it returns that record and nil.
 	// If not found, it returns nil, nil.
 	Load(ctx context.Context, id string) (*Record, error)
@@ -38,14 +38,14 @@ type Store interface {
 	// Save saves r.
 	Save(ctx context.Context, r *Record) error
 
-	// Delete deletes a session record associated with token.
+	// Delete deletes a session record associated with id.
 	Delete(ctx context.Context, id string) error
 
 	// DeleteExpired deletes all expired session records.
 	DeleteExpired(ctx context.Context) error
-
-	// All(ctx context.Context) ([]*Record, error)
 }
+
+// All(ctx context.Context) ([]*Record, error)
 
 // Record holds information about an HTTP session.
 type Record struct {
@@ -58,13 +58,24 @@ type Record struct {
 }
 
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
-	slog.ErrorContext(r.Context(), fmt.Sprintf("sessions: %v", err))
+	msg := fmt.Sprintf("sessions: %v", err)
+	errFromCleanup := w == nil && r == nil
+
+	if errFromCleanup {
+		slog.Error(msg)
+		return
+	}
+
+	slog.ErrorContext(r.Context(), msg)
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
-func cleanupInterval(ctx context.Context, store Store, interval time.Duration) {
+func cleanup(
+	ctx context.Context, store Store, interval time.Duration,
+	errorHandler func(w http.ResponseWriter, r *http.Request, err error),
+) bool {
 	if interval <= 0 {
-		return
+		return false
 	}
 	go func() {
 		c := time.Tick(interval)
@@ -72,13 +83,14 @@ func cleanupInterval(ctx context.Context, store Store, interval time.Duration) {
 			select {
 			case <-c:
 				if err := store.DeleteExpired(ctx); err != nil {
-					slog.ErrorContext(ctx, fmt.Sprintf("sessions: %v", err))
+					errorHandler(nil, nil, err)
 				}
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+	return true
 }
 
 // Middleware is a net/http middleware that automatically tracks HTTP sessions.
@@ -106,7 +118,7 @@ func NewMiddleware[T any](ctx context.Context, cfg Config[T]) *Middleware[T] {
 		cfg.ErrorHandler = defaultErrorHandler
 	}
 	cfg.Cookie = http.Cookie{
-		Name:        cmp.Or(cfg.Cookie.Name, "SESSIONID"),
+		Name:        cmp.Or(cfg.Cookie.Name, "id"),
 		Path:        cmp.Or(cfg.Cookie.Path, "/"),
 		Domain:      cmp.Or(cfg.Cookie.Domain, ""),
 		HttpOnly:    cmp.Or(cfg.Cookie.HttpOnly, true),
@@ -114,7 +126,7 @@ func NewMiddleware[T any](ctx context.Context, cfg Config[T]) *Middleware[T] {
 		SameSite:    cmp.Or(cfg.Cookie.SameSite, http.SameSiteLaxMode),
 		Partitioned: cmp.Or(cfg.Cookie.Partitioned, false),
 	}
-	cleanupInterval(ctx, cfg.Store, cfg.CleanupInterval)
+	cleanup(ctx, cfg.Store, cfg.CleanupInterval, cfg.ErrorHandler)
 	return &Middleware[T]{cfg: cfg, now: time.Now}
 }
 
@@ -134,7 +146,7 @@ func (m *Middleware[T]) Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		if _, exits := m.activeSession.LoadOrStore(record.ID, struct{}{}); exits {
+		if _, loaded := m.activeSession.LoadOrStore(record.ID, struct{}{}); loaded {
 			m.cfg.ErrorHandler(w, r, errors.New("active session alreadly exists"))
 			return
 		}
@@ -161,13 +173,18 @@ func (m *Middleware[T]) Wrap(next http.Handler) http.Handler {
 
 type sessionWriter[T any] struct {
 	http.ResponseWriter
-	req    *http.Request
-	mw     *Middleware[T]
+	req *http.Request
+	mw  *Middleware[T]
+
+	mu     sync.Mutex
 	saved  bool
 	failed bool
 }
 
 func (w *sessionWriter[T]) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.failed {
 		return len(b), nil
 	}
@@ -183,6 +200,9 @@ func (w *sessionWriter[T]) Write(b []byte) (int, error) {
 }
 
 func (w *sessionWriter[T]) WriteHeader(code int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.failed {
 		return
 	}
@@ -289,7 +309,7 @@ func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
 
 func (m *Middleware[T]) newRecord() *Record {
 	r := &Record{
-		ID:               randomText(),
+		ID:               rand.Text(),
 		AbsoluteDeadline: m.now().Add(m.cfg.AbsoluteTimeout),
 		session:          new(T),
 	}
@@ -319,7 +339,7 @@ func (m *Middleware[T]) Delete(ctx context.Context) error {
 }
 
 func (m *Middleware[T]) Renew(ctx context.Context) error {
-	return m.renewID(ctx, randomText())
+	return m.renewID(ctx, rand.Text())
 }
 
 // It is caller's responsibility to choose a unique id.
