@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -302,7 +303,7 @@ func TestCleanupNoop(t *testing.T) {
 	cancel()
 
 	for _, interval := range []time.Duration{-1, 0} {
-		if started := cleanup(ctx, nil, interval, defaultErrorHandler     ); started {
+		if started := cleanup(ctx, nil, interval, defaultErrorHandler); started {
 			t.Errorf("cleanup goroutine started with interval = %v", interval)
 		}
 	}
@@ -335,4 +336,48 @@ func TestCleanupDelete(t *testing.T) {
 	if !called {
 		t.Error("DeleteExpired was not called")
 	}
+}
+
+func TestMiddlewareRace(t *testing.T) {
+	var errhCalled bool
+	errh := func(w http.ResponseWriter, r *http.Request, err error) {
+		if err.Error() == "active session alreadly exists" {
+			errhCalled = true
+		}
+	}
+	ctx := context.Background()
+	session := NewMiddleware(ctx, Config[testSession]{ErrorHandler: errh})
+	h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(1 * time.Millisecond)
+		w.Write(nil)
+	}))
+	synctest.Run(func() {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		res := w.Result()
+		cookie := res.Cookies()[0]
+		req1 := httptest.NewRequest("GET", "/", nil)
+		req2 := httptest.NewRequest("GET", "/", nil)
+		req1.Header.Set("Cookie", cookie.String())
+		req2.Header.Set("Cookie", cookie.String())
+
+		w1 := httptest.NewRecorder()
+		w2 := httptest.NewRecorder()
+
+		go func() {
+			h.ServeHTTP(w1, req1)
+		}()
+		synctest.Wait()
+		if errhCalled {
+			t.Error("unexpected errorHandler call")
+		}
+		go func() {
+			h.ServeHTTP(w2, req2)
+		}()
+		synctest.Wait()
+		if !errhCalled {
+			t.Error("errorHandler was not called")
+		}
+	})
 }
