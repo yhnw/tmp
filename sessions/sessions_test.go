@@ -339,19 +339,19 @@ func TestCleanupDelete(t *testing.T) {
 }
 
 func TestMiddlewareRace(t *testing.T) {
-	var errhCalled bool
-	errh := func(w http.ResponseWriter, r *http.Request, err error) {
-		if err.Error() == "active session alreadly exists" {
-			errhCalled = true
-		}
-	}
-	ctx := context.Background()
-	session := NewMiddleware(ctx, Config[testSession]{ErrorHandler: errh})
-	h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(1 * time.Millisecond)
-		w.Write(nil)
-	}))
 	synctest.Run(func() {
+		var errhCalled bool
+		errh := func(w http.ResponseWriter, r *http.Request, err error) {
+			if err.Error() == "active session alreadly exists" {
+				errhCalled = true
+			}
+		}
+		ctx := context.Background()
+		session := NewMiddleware(ctx, Config[testSession]{ErrorHandler: errh})
+		h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(1 * time.Millisecond)
+			w.Write(nil)
+		}))
 		req := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
@@ -375,6 +375,7 @@ func TestMiddlewareRace(t *testing.T) {
 		go func() {
 			h.ServeHTTP(w2, req2)
 		}()
+		time.Sleep(1 * time.Millisecond)
 		synctest.Wait()
 		if !errhCalled {
 			t.Error("errorHandler was not called")
