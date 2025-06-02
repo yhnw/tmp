@@ -223,7 +223,6 @@ func (m *Middleware[T]) loadOrCreate(ctx context.Context, id string) (*Record, e
 	} else {
 		r.session.Store(s)
 	}
-	// r.Data = nil
 	return r, nil
 }
 
@@ -264,7 +263,6 @@ func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
 	if r.Data, err = m.Codec.Encode(r.session.Load().(*T)); err != nil {
 		return nil, err
 	}
-	// r.session = nil
 	return r, m.Store.Save(ctx, r)
 }
 
