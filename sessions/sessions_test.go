@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -24,8 +23,8 @@ type testSession struct {
 
 func TestMiddleware(t *testing.T) {
 	ctx := context.Background()
-	session := NewMiddleware(ctx, Config[testSession]{})
-	h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	session := NewMiddleware[testSession]()
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.RequestURI {
 		case "/increment":
 			sess := session.Get(r.Context())
@@ -56,9 +55,9 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/renewid", nil),
 			want: 0,
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
-				if r, err := session.cfg.Store.Load(ctx, cookie.Value); err != nil {
+				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.(*testSession).N; got != want {
+				} else if got := r.session.Load().(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -67,9 +66,9 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 1,
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
-				if r, err := session.cfg.Store.Load(ctx, cookie.Value); err != nil {
+				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.(*testSession).N; got != want {
+				} else if got := r.session.Load().(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -78,9 +77,9 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 2,
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
-				if r, err := session.cfg.Store.Load(ctx, cookie.Value); err != nil {
+				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.(*testSession).N; got != want {
+				} else if got := r.session.Load().(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -89,12 +88,12 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/renewid", nil),
 			want: 2,
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
-				if r, err := session.cfg.Store.Load(ctx, "0"); !(r == nil && err == nil) {
+				if r, err := session.Store.Load(ctx, "0"); !(r == nil && err == nil) {
 					t.Fatal("old session found after renewid")
 				}
-				if r, err := session.cfg.Store.Load(ctx, cookie.Value); err != nil {
+				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.(*testSession).N; got != want {
+				} else if got := r.session.Load().(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -103,9 +102,9 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 3,
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
-				if r, err := session.cfg.Store.Load(ctx, cookie.Value); err != nil {
+				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.(*testSession).N; got != want {
+				} else if got := r.session.Load().(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -116,7 +115,7 @@ func TestMiddleware(t *testing.T) {
 				if cookie.MaxAge != -1 {
 					t.Fatal("want MaxAge == -1")
 				}
-				if r, err := session.cfg.Store.Load(ctx, "2"); !(r == nil && err == nil) {
+				if r, err := session.Store.Load(ctx, "2"); !(r == nil && err == nil) {
 					t.Fatal("session found after delete")
 				}
 			},
@@ -125,9 +124,9 @@ func TestMiddleware(t *testing.T) {
 			req:  httptest.NewRequest("GET", "/increment", nil),
 			want: 1,
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
-				if r, err := session.cfg.Store.Load(ctx, cookie.Value); err != nil {
+				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.(*testSession).N; got != want {
+				} else if got := r.session.Load().(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -141,7 +140,7 @@ func TestMiddleware(t *testing.T) {
 		h.ServeHTTP(w, tt.req)
 		resp := w.Result()
 		for _, c := range resp.Cookies() {
-			if c.Name == session.cfg.Cookie.Name {
+			if c.Name == session.Cookie.Name {
 				cookie = c
 				break
 			}
@@ -157,8 +156,7 @@ func TestGetBeforeWrap(t *testing.T) {
 		}
 	}()
 
-	ctx := context.Background()
-	session := NewMiddleware(ctx, Config[testSession]{})
+	session := NewMiddleware[testSession]()
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = session.Get(r.Context())
 	})
@@ -174,9 +172,8 @@ func TestGetAfterDelete(t *testing.T) {
 		}
 	}()
 
-	ctx := context.Background()
-	session := NewMiddleware(ctx, Config[testSession]{})
-	h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	session := NewMiddleware[testSession]()
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := session.Delete(r.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -188,10 +185,10 @@ func TestGetAfterDelete(t *testing.T) {
 }
 
 func TestMiddlewareNoWrite(t *testing.T) {
-	ctx := context.Background()
 	store := newMemoryStore()
-	session := NewMiddleware(ctx, Config[testSession]{Store: store})
-	h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	session := NewMiddleware[testSession]()
+	session.Store = store
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	}))
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -202,13 +199,13 @@ func TestMiddlewareNoWrite(t *testing.T) {
 }
 
 func TestDeleteNoWrite(t *testing.T) {
-	ctx := context.Background()
 	store := newMemoryStore()
-	session := NewMiddleware(ctx, Config[testSession]{Store: store})
+	session := NewMiddleware[testSession]()
+	session.Store = store
 	record := session.newRecord()
 	record.ID = "test"
 	store.m[record.ID] = record
-	h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := session.newContextWithRecord(r.Context(), record)
 		if err := session.Delete(ctx); err != nil {
 			t.Fatal(err)
@@ -222,10 +219,46 @@ func TestDeleteNoWrite(t *testing.T) {
 	}
 }
 
+func TestGetAfterDeletePanic(t *testing.T) {
+	var store funcStore
+	store.DeleteFunc = func(ctx context.Context, id string) error {
+		return nil
+	}
+	ctx := context.Background()
+	session := NewMiddleware[testSession]()
+	session.Store = store
+	ctx = session.newContextWithRecord(ctx, session.newRecord())
+	session.Delete(ctx)
+	defer func() {
+		if err := recover(); err != "session alreadly deleted" {
+			t.Fatal("unexpected")
+		}
+	}()
+	session.Get(ctx)
+}
+
+func TestGetAfterRenew(t *testing.T) {
+	var store funcStore
+	store.DeleteFunc = func(ctx context.Context, id string) error {
+		return nil
+	}
+	ctx := context.Background()
+	session := NewMiddleware[testSession]()
+	ctx = session.newContextWithRecord(ctx, session.newRecord())
+	session.Renew(ctx)
+	defer func() {
+		if err := recover(); err != nil {
+			t.Fatal("unexpected panic")
+		}
+	}()
+	session.Get(ctx)
+}
+
 func TestRenewUpdate(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStore()
-	session := NewMiddleware(ctx, Config[testSession]{Store: store})
+	session := NewMiddleware[testSession]()
+	session.Store = store
 	now := time.Now()
 	session.now = func() time.Time { return now }
 	record := session.newRecord()
@@ -235,7 +268,7 @@ func TestRenewUpdate(t *testing.T) {
 	if record.ID != "newID" {
 		t.Errorf("got %v; want newID", record.ID)
 	}
-	got, want := record.AbsoluteDeadline, now.Add(session.cfg.AbsoluteTimeout)
+	got, want := record.AbsoluteDeadline, now.Add(session.AbsoluteTimeout)
 	if !got.Equal(want) {
 		t.Errorf("got %v; want %v", record.AbsoluteDeadline, want)
 	}
@@ -279,7 +312,9 @@ func TestRenewDelete(t *testing.T) {
 		return nil
 	}
 	ctx := context.Background()
-	session := NewMiddleware(ctx, Config[testSession]{Store: store})
+
+	session := NewMiddleware[testSession]()
+	session.Store = store
 	ctx = session.newContextWithRecord(ctx, session.newRecord())
 	session.Renew(ctx)
 	if !called {
@@ -289,7 +324,7 @@ func TestRenewDelete(t *testing.T) {
 
 func TestID(t *testing.T) {
 	ctx := context.Background()
-	session := NewMiddleware(ctx, Config[testSession]{})
+	session := NewMiddleware[testSession]()
 	r := session.newRecord()
 	r.ID = "id"
 	ctx = session.newContextWithRecord(ctx, r)
@@ -298,45 +333,45 @@ func TestID(t *testing.T) {
 	}
 }
 
-func TestCleanupNoop(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+// func TestCleanupNoop(t *testing.T) {
+// 	ctx, cancel := context.WithCancel(context.Background())
+// 	cancel()
 
-	for _, interval := range []time.Duration{-1, 0} {
-		if started := cleanup(ctx, nil, interval, defaultErrorHandler); started {
-			t.Errorf("cleanup goroutine started with interval = %v", interval)
-		}
-	}
-}
+// 	for _, interval := range []time.Duration{-1, 0} {
+// 		if started := cleanup(ctx, nil, interval, defaultErrorHandler); started {
+// 			t.Errorf("cleanup goroutine started with interval = %v", interval)
+// 		}
+// 	}
+// }
 
-func TestCleanup(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+// func TestCleanup(t *testing.T) {
+// 	ctx, cancel := context.WithCancel(context.Background())
+// 	cancel()
 
-	if started := cleanup(ctx, nil, 10*time.Second, defaultErrorHandler); !started {
-		t.Errorf("cleanup gorountine has not been started")
-	}
-}
+// 	if started := cleanup(ctx, nil, 10*time.Second, defaultErrorHandler); !started {
+// 		t.Errorf("cleanup gorountine has not been started")
+// 	}
+// }
 
-func TestCleanupDelete(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var store funcStore
-	called := false
-	once := sync.OnceFunc(func() { called = true })
-	store.DeleteExpiredFunc = func(ctx context.Context) error {
-		once()
-		return nil
-	}
+// func TestCleanupDelete(t *testing.T) {
+// 	ctx, cancel := context.WithCancel(context.Background())
+// 	defer cancel()
+// 	var store funcStore
+// 	called := false
+// 	once := sync.OnceFunc(func() { called = true })
+// 	store.DeleteExpiredFunc = func(ctx context.Context) error {
+// 		once()
+// 		return nil
+// 	}
 
-	if started := cleanup(ctx, store, 1, defaultErrorHandler); !started {
-		t.Errorf("cleanup gorountine has not been started")
-	}
-	time.Sleep(100 * time.Millisecond)
-	if !called {
-		t.Error("DeleteExpired was not called")
-	}
-}
+// 	if started := cleanup(ctx, store, 1, defaultErrorHandler); !started {
+// 		t.Errorf("cleanup gorountine has not been started")
+// 	}
+// 	time.Sleep(100 * time.Millisecond)
+// 	if !called {
+// 		t.Error("DeleteExpired was not called")
+// 	}
+// }
 
 func TestMiddlewareRace(t *testing.T) {
 	synctest.Run(func() {
@@ -346,9 +381,9 @@ func TestMiddlewareRace(t *testing.T) {
 				errhCalled = true
 			}
 		}
-		ctx := context.Background()
-		session := NewMiddleware(ctx, Config[testSession]{ErrorHandler: errh})
-		h := session.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session := NewMiddleware[testSession]()
+		session.ErrorHandler = errh
+		h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(1 * time.Millisecond)
 			w.Write(nil)
 		}))
@@ -375,7 +410,7 @@ func TestMiddlewareRace(t *testing.T) {
 		go func() {
 			h.ServeHTTP(w2, req2)
 		}()
-		time.Sleep(1 * time.Millisecond)
+		// time.Sleep(1 * time.Millisecond)
 		synctest.Wait()
 		if !errhCalled {
 			t.Error("errorHandler was not called")

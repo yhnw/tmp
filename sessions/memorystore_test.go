@@ -30,8 +30,8 @@ func TestMemoryStoreLoad(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		id string
-		want  *Record
+		id   string
+		want *Record
 	}{
 		{validRecord.ID, validRecord},
 		{expiredRecord.ID, nil},
@@ -84,8 +84,8 @@ func TestMemoryStoreDelete(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		id string
-		want  *Record
+		id   string
+		want *Record
 	}{
 		{validRecord.ID, nil},
 		{expiredRecord.ID, nil},
@@ -109,8 +109,8 @@ func TestMemoryStoreDeleteExpired(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		id string
-		want  *Record
+		id   string
+		want *Record
 	}{
 		{validRecord.ID, validRecord},
 		{expiredRecord.ID, nil},

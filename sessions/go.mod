@@ -1,3 +1,3 @@
 module github.com/yhnw/tmp/sessions
 
-go 1.24.0
+go 1.24.3
