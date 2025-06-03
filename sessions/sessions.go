@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -37,7 +36,7 @@ type Record struct {
 	AbsoluteDeadline time.Time
 	Data             []byte
 
-	session atomic.Value // *T
+	session any // *T
 }
 
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
@@ -221,7 +220,7 @@ func (m *Middleware[T]) loadOrCreate(ctx context.Context, id string) (*Record, e
 	if s, err := m.Codec.Decode(r.Data); err != nil {
 		return nil, err
 	} else {
-		r.session.Store(s)
+		r.session = s
 	}
 	return r, nil
 }
@@ -232,7 +231,7 @@ func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) 
 		return err
 	}
 
-	if r.session.Load() == (*T)(nil) {
+	if r.session == nil {
 		// Delete was called; delete the cookie
 		cookie := m.Cookie
 		cookie.MaxAge = -1
@@ -250,7 +249,7 @@ func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) 
 // If session was deleted, it returns record (session == nil) and nil.
 func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
 	r := m.recordFromContext(ctx)
-	if r.session.Load() == (*T)(nil) {
+	if r.session == nil {
 		// session was deleted
 		return r, nil
 	}
@@ -260,7 +259,7 @@ func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
 		r.IdleDeadline = r.AbsoluteDeadline
 	}
 
-	if r.Data, err = m.Codec.Encode(r.session.Load().(*T)); err != nil {
+	if r.Data, err = m.Codec.Encode(r.session.(*T)); err != nil {
 		return nil, err
 	}
 	return r, m.Store.Save(ctx, r)
@@ -271,16 +270,16 @@ func (m *Middleware[T]) newRecord() *Record {
 		ID:               rand.Text(),
 		AbsoluteDeadline: m.now().Add(m.AbsoluteTimeout),
 	}
-	r.session.Store(new(T))
+	r.session = new(T)
 	return r
 }
 
 func (m *Middleware[T]) Get(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
-	if r.session.Load() == (*T)(nil) {
+	if r.session == nil {
 		panic("session alreadly deleted")
 	}
-	return r.session.Load().(*T)
+	return r.session.(*T)
 }
 
 func (m *Middleware[T]) ID(ctx context.Context) string {
@@ -293,7 +292,7 @@ func (m *Middleware[T]) Delete(ctx context.Context) error {
 	if err := m.Store.Delete(ctx, r.ID); err != nil {
 		return err
 	}
-	r.session.Store((*T)(nil))
+	r.session = nil
 	return nil
 }
 

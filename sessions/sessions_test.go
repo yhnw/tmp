@@ -57,7 +57,7 @@ func TestMiddleware(t *testing.T) {
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
 				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.Load().(*testSession).N; got != want {
+				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -68,7 +68,7 @@ func TestMiddleware(t *testing.T) {
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
 				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.Load().(*testSession).N; got != want {
+				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -79,7 +79,7 @@ func TestMiddleware(t *testing.T) {
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
 				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.Load().(*testSession).N; got != want {
+				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -93,7 +93,7 @@ func TestMiddleware(t *testing.T) {
 				}
 				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.Load().(*testSession).N; got != want {
+				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -104,7 +104,7 @@ func TestMiddleware(t *testing.T) {
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
 				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.Load().(*testSession).N; got != want {
+				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -126,7 +126,7 @@ func TestMiddleware(t *testing.T) {
 			check: func(t *testing.T, want int, cookie *http.Cookie) {
 				if r, err := session.Store.Load(ctx, cookie.Value); err != nil {
 					t.Fatal(err)
-				} else if got := r.session.Load().(*testSession).N; got != want {
+				} else if got := r.session.(*testSession).N; got != want {
 					t.Fatalf("got %v; want %v", got, want)
 				}
 			},
@@ -204,7 +204,7 @@ func TestDeleteNoWrite(t *testing.T) {
 	session.Store = store
 	record := session.newRecord()
 	record.ID = "test"
-	store.m[record.ID] = record
+	store.m[record.ID] = *record
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := session.newContextWithRecord(r.Context(), record)
 		if err := session.Delete(ctx); err != nil {

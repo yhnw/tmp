@@ -2,17 +2,18 @@ package sessions
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
 
 type memoryStore struct {
 	mu sync.RWMutex
-	m  map[string]*Record
+	m  map[string]Record
 }
 
 func newMemoryStore() *memoryStore {
-	return &memoryStore{m: make(map[string]*Record)}
+	return &memoryStore{m: make(map[string]Record)}
 }
 
 func (s *memoryStore) Load(_ context.Context, id string) (*Record, error) {
@@ -22,7 +23,8 @@ func (s *memoryStore) Load(_ context.Context, id string) (*Record, error) {
 	if !ok || time.Now().After(r.IdleDeadline) {
 		return nil, nil
 	}
-	return r, nil
+
+	return &r, nil
 }
 
 func (s *memoryStore) Save(_ context.Context, r *Record) error {
@@ -30,7 +32,8 @@ func (s *memoryStore) Save(_ context.Context, r *Record) error {
 		return nil
 	}
 	s.mu.Lock()
-	s.m[r.ID] = r
+	r.Data = slices.Clone(r.Data)
+	s.m[r.ID] = *r
 	s.mu.Unlock()
 	return nil
 }
