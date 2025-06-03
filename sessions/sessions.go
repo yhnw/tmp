@@ -160,9 +160,6 @@ type sessionWriter[T any] struct {
 }
 
 func (w *sessionWriter[T]) Write(b []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if w.failed {
 		return len(b), nil
 	}
