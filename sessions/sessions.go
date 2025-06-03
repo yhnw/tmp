@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/go-json-experiment/json"
 )
 
 // Store is the interface that stores session records.
@@ -51,11 +53,9 @@ type Middleware[T any] struct {
 	// AbsoluteTimeout defines the maximum amount of time a session can be active.
 	// See https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md#absolute-timeout
 	AbsoluteTimeout time.Duration
-	CleanupInterval time.Duration
 	// Cookie is used as a template for a Set-Cookie header.
 	Cookie       http.Cookie
 	Store        Store
-	Codec        Codec[T]
 	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 	activeSession sync.Map // string -> struct{}
@@ -68,7 +68,6 @@ func NewMiddleware[T any]() *Middleware[T] {
 		IdleTimeout:     24 * time.Hour,
 		AbsoluteTimeout: 7 * 24 * time.Hour,
 		Store:           newMemoryStore(),
-		Codec:           JSONCodec[T]{},
 		ErrorHandler:    defaultErrorHandler,
 		Cookie: http.Cookie{
 			Name:        "id",
@@ -101,19 +100,23 @@ func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time
 }
 
 // Handler returns a middleware that automatically tracks HTTP sessions.
-// After it was called, Session's fields must not be mutated.
-// If s.CleanupInterval > 0, it also starts a goroutine that deletes expired sessions
-// after each CleanupInterval.
+// After it was called, m's fields must not be mutated.
 func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := ""
+		var (
+			record *Record
+			found  bool
+			err    error
+		)
 		if cookies := r.CookiesNamed(m.Cookie.Name); len(cookies) == 1 {
-			id = cookies[0].Value
+			if record, err = m.Store.Load(r.Context(), cookies[0].Value); err != nil {
+				m.ErrorHandler(w, r, err)
+				return
+			}
+			found = record != nil
 		}
-		record, err := m.loadOrCreate(r.Context(), id)
-		if err != nil {
-			m.ErrorHandler(w, r, err)
-			return
+		if !found {
+			record = m.newRecord()
 		}
 
 		if _, loaded := m.activeSession.LoadOrStore(record.ID, struct{}{}); loaded {
@@ -121,6 +124,13 @@ func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 			return
 		}
 		defer m.activeSession.Delete(record.ID)
+
+		if found {
+			if err := json.Unmarshal(record.Data, &record.session); err != nil {
+				m.ErrorHandler(w, r, err)
+				return
+			}
+		}
 
 		ctx := m.newContextWithRecord(r.Context(), record)
 		r = r.WithContext(ctx)
@@ -136,7 +146,6 @@ func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 			if _, err := m.saveRecord(r.Context()); err != nil {
 				m.ErrorHandler(w, r, err)
 			}
-			// panic("unreachable")
 		}
 	})
 }
@@ -205,45 +214,28 @@ func (m *Middleware[T]) recordFromContext(ctx context.Context) *Record {
 	return r
 }
 
-func (m *Middleware[T]) loadOrCreate(ctx context.Context, id string) (*Record, error) {
-	if id == "" {
-		return m.newRecord(), nil
-	}
-	r, err := m.Store.Load(ctx, id)
-	if err != nil {
-		return nil, err
-	} else if r == nil {
-		// not found
-		return m.newRecord(), nil
-	}
-
-	if s, err := m.Codec.Decode(r.Data); err != nil {
-		return nil, err
-	} else {
-		r.session = s
-	}
-	return r, nil
-}
-
 func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) error {
 	r, err := m.saveRecord(ctx)
 	if err != nil {
 		return err
 	}
+	m.setCookie(r, w)
+	return nil
+}
 
+func (m *Middleware[T]) setCookie(r *Record, w http.ResponseWriter) {
 	if r.session == nil {
 		// Delete was called; delete the cookie
 		cookie := m.Cookie
 		cookie.MaxAge = -1
 		http.SetCookie(w, &cookie)
-		return nil
+		return
 	}
 
 	cookie := m.Cookie
 	cookie.Value = r.ID
 	cookie.MaxAge = int(r.IdleDeadline.Sub(m.now()).Seconds())
 	http.SetCookie(w, &cookie)
-	return nil
 }
 
 // If session was deleted, it returns record (session == nil) and nil.
@@ -259,19 +251,18 @@ func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
 		r.IdleDeadline = r.AbsoluteDeadline
 	}
 
-	if r.Data, err = m.Codec.Encode(r.session.(*T)); err != nil {
+	if r.Data, err = json.Marshal(r.session.(*T)); err != nil {
 		return nil, err
 	}
 	return r, m.Store.Save(ctx, r)
 }
 
 func (m *Middleware[T]) newRecord() *Record {
-	r := &Record{
+	return &Record{
 		ID:               rand.Text(),
 		AbsoluteDeadline: m.now().Add(m.AbsoluteTimeout),
+		session:          new(T),
 	}
-	r.session = new(T)
-	return r
 }
 
 func (m *Middleware[T]) Get(ctx context.Context) *T {
