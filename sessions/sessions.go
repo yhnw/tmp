@@ -155,7 +155,6 @@ type sessionWriter[T any] struct {
 	req *http.Request
 	mw  *Middleware[T]
 
-	mu     sync.Mutex // necessary?
 	saved  bool
 	failed bool
 }
@@ -179,9 +178,6 @@ func (w *sessionWriter[T]) Write(b []byte) (int, error) {
 }
 
 func (w *sessionWriter[T]) WriteHeader(code int) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if w.failed {
 		return
 	}
