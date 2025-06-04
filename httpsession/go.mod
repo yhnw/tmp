@@ -1,4 +1,4 @@
-module github.com/yhnw/tmp/sessions
+module github.com/yhnw/tmp/httpsession
 
 go 1.24.3
 

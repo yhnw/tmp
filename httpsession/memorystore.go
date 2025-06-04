@@ -1,8 +1,7 @@
-package sessions
+package httpsession
 
 import (
 	"context"
-	"slices"
 	"sync"
 	"time"
 )
@@ -23,7 +22,6 @@ func (s *memoryStore) Load(_ context.Context, id string) (*Record, error) {
 	if !ok || time.Now().After(r.IdleDeadline) {
 		return nil, nil
 	}
-
 	return &r, nil
 }
 
@@ -32,7 +30,6 @@ func (s *memoryStore) Save(_ context.Context, r *Record) error {
 		return nil
 	}
 	s.mu.Lock()
-	r.Data = slices.Clone(r.Data)
 	s.m[r.ID] = *r
 	s.mu.Unlock()
 	return nil

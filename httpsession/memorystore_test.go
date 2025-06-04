@@ -1,4 +1,4 @@
-package sessions
+package httpsession
 
 import (
 	"testing"
@@ -29,12 +29,12 @@ func TestMemoryStoreLoad(t *testing.T) {
 	ctx := t.Context()
 
 	tests := []struct {
-		id   string
-		want *Record
+		id      string
+		wantNil bool
 	}{
-		{validRecord.ID, &validRecord},
-		{expiredRecord.ID, nil},
-		{"missing", nil},
+		{validRecord.ID, false},
+		{expiredRecord.ID, true},
+		{"missing", true},
 	}
 
 	for _, tt := range tests {
@@ -44,12 +44,12 @@ func TestMemoryStoreLoad(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tt.want == nil {
+			if tt.wantNil {
 				if r != nil {
-					t.Fatalf("got %v; want %v", r, tt.want)
+					t.Fatalf("got %#v; want nil", r)
 				}
-			} else if r.ID != tt.want.ID {
-				t.Fatalf("got %v; want %v", r, tt.want)
+			} else if r.ID != tt.id {
+				t.Fatalf("got %#v; want %#v", r, tt.id)
 			}
 		})
 	}
@@ -96,7 +96,7 @@ func TestMemoryStoreDelete(t *testing.T) {
 	}{
 		{validRecord.ID, nil},
 		{expiredRecord.ID, nil},
-		{"missing", nil},
+		{"foo", nil},
 	}
 
 	for _, tt := range tests {
@@ -106,7 +106,7 @@ func TestMemoryStoreDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 			if r, _ := store.Load(ctx, tt.id); r != tt.want {
-				t.Fatalf("got %v; want %v", r, tt.want)
+				t.Fatalf("got %#v; want %#v", r, tt.want)
 			}
 		})
 	}

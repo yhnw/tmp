@@ -1,11 +1,10 @@
-// Package sessions provides a net/http middleware that tracks HTTP sessions using HTTP cookies.
-package sessions
+// Package httpsession provides a net/http middleware that tracks HTTP sessions using HTTP cookies.
+package httpsession
 
 import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -42,7 +41,7 @@ type Record struct {
 }
 
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
-	slog.ErrorContext(r.Context(), fmt.Sprintf("sessions: %v", err))
+	slog.ErrorContext(r.Context(), "httpsession: "+err.Error())
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
@@ -58,8 +57,8 @@ type Middleware[T any] struct {
 	Store        Store
 	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
-	activeSession sync.Map // string -> struct{}
-	now           func() time.Time
+	activeSession sync.Map         // string -> struct{}
+	now           func() time.Time // for tests
 }
 
 // NewMiddleware returns a new instance of [Middleware] with default settings.
@@ -120,7 +119,7 @@ func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 		}
 
 		if _, loaded := m.activeSession.LoadOrStore(record.ID, struct{}{}); loaded {
-			m.ErrorHandler(w, r, errors.New("active session alreadly exists"))
+			m.ErrorHandler(w, r, errors.New("httpsession: active session alreadly exists"))
 			return
 		}
 		defer m.activeSession.Delete(record.ID)
@@ -202,7 +201,7 @@ func (m *Middleware[T]) newContextWithRecord(ctx context.Context, r *Record) con
 func (m *Middleware[T]) recordFromContext(ctx context.Context) *Record {
 	r, _ := ctx.Value(recordContextKey[T]{}).(*Record)
 	if r == nil {
-		panic("sessions: middleware is not used")
+		panic("httpsession: middleware was not used")
 	}
 	return r
 }
@@ -212,22 +211,24 @@ func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) 
 	if err != nil {
 		return err
 	}
-	m.setCookie(r, w)
+	if r == nil {
+		m.deleteCookie(w)
+	} else {
+		m.setCookie(w, r)
+	}
 	return nil
 }
 
-func (m *Middleware[T]) setCookie(r *Record, w http.ResponseWriter) {
-	if r.session == nil {
-		// Delete was called; delete the cookie
-		cookie := m.Cookie
-		cookie.MaxAge = -1
-		http.SetCookie(w, &cookie)
-		return
-	}
-
+func (m *Middleware[T]) setCookie(w http.ResponseWriter, r *Record) {
 	cookie := m.Cookie
 	cookie.Value = r.ID
 	cookie.MaxAge = int(r.IdleDeadline.Sub(m.now()).Seconds())
+	http.SetCookie(w, &cookie)
+}
+
+func (m *Middleware[T]) deleteCookie(w http.ResponseWriter) {
+	cookie := m.Cookie
+	cookie.MaxAge = -1
 	http.SetCookie(w, &cookie)
 }
 
@@ -236,7 +237,7 @@ func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
 	r := m.recordFromContext(ctx)
 	if r.session == nil {
 		// session was deleted
-		return r, nil
+		return nil, nil
 	}
 
 	r.IdleDeadline = m.now().Add(m.IdleTimeout)
@@ -261,7 +262,7 @@ func (m *Middleware[T]) newRecord() *Record {
 func (m *Middleware[T]) Get(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
 	if r.session == nil {
-		panic("session alreadly deleted")
+		panic("httpsession: session alreadly deleted")
 	}
 	return r.session.(*T)
 }
@@ -285,6 +286,7 @@ func (m *Middleware[T]) Renew(ctx context.Context) error {
 }
 
 // It is caller's responsibility to choose a unique id.
+
 func (m *Middleware[T]) RenewID(ctx context.Context, id string) error {
 	return m.renewID(ctx, id)
 }
