@@ -130,7 +130,7 @@ func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 		defer m.activeSession.Delete(record.ID)
 
 		if found {
-			if err := json.Unmarshal(record.Data, &record.session); err != nil {
+			if err := json.Unmarshal(record.Data, record.session.(*T)); err != nil {
 				m.ErrorHandler(w, r, err)
 				return
 			}
