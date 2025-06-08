@@ -16,6 +16,20 @@ type rwUnwrapper interface {
 
 var _ rwUnwrapper = (*sessionWriter[testSession])(nil)
 
+func wantPanic(t *testing.T, wantRecover any) {
+	t.Helper()
+	if got := recover(); got != wantRecover {
+		t.Fatalf("unexpected panic: recover() = %v; want %v", got, wantRecover)
+	}
+}
+
+func noPanic(t *testing.T) {
+	t.Helper()
+	if got := recover(); got != nil {
+		t.Fatalf("unexpected panic: recover() = %v", got)
+	}
+}
+
 type testSession struct {
 	N int
 }
@@ -159,28 +173,17 @@ func TestMiddleware(t *testing.T) {
 }
 
 func TestGetBeforeHandler(t *testing.T) {
-	defer func() {
-		if err := recover(); err != "httpsession: middleware was not used" {
-			t.Error("want panic")
-		}
-	}()
-
 	session := NewMiddleware[testSession]()
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = session.Get(r.Context())
 	})
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
+	defer wantPanic(t, "httpsession: middleware was not used")
 	h.ServeHTTP(w, r)
 }
 
 func TestGetAfterDelete(t *testing.T) {
-	defer func() {
-		if err := recover(); err != "httpsession: session alreadly deleted" {
-			t.Error("want panic")
-		}
-	}()
-
 	session := NewMiddleware[testSession]()
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := session.Delete(r.Context()); err != nil {
@@ -190,6 +193,7 @@ func TestGetAfterDelete(t *testing.T) {
 	}))
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
+	defer wantPanic(t, "httpsession: session alreadly deleted")
 	h.ServeHTTP(w, r)
 }
 
@@ -226,11 +230,6 @@ func TestDeleteNoWrite(t *testing.T) {
 
 func TestGetAfterDeletePanic(t *testing.T) {
 	session := NewMiddleware[testSession]()
-	defer func() {
-		if err := recover(); err != "httpsession: session alreadly deleted" {
-			t.Fatal(err)
-		}
-	}()
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := session.Delete(r.Context()); err != nil {
 			t.Fatal(err)
@@ -239,6 +238,7 @@ func TestGetAfterDeletePanic(t *testing.T) {
 	}))
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
+	defer wantPanic(t, "httpsession: session alreadly deleted")
 	h.ServeHTTP(w, r)
 }
 
@@ -253,11 +253,7 @@ func TestGetAfterRenew(t *testing.T) {
 	}))
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-	defer func() {
-		if err := recover(); err != nil {
-			t.Fatal("unexpected panic")
-		}
-	}()
+	defer noPanic(t)
 	h.ServeHTTP(w, r)
 }
 
