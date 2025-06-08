@@ -10,14 +10,14 @@ import (
 	"testing"
 )
 
-func testConfigs() []Config {
-	cfgs := []Config{}
+func testConfigs() []Parameter {
+	cfgs := []Parameter{}
 	for keyLength := range 4 {
 		for saltLength := range 4 {
 			for memory := range 2 {
 				for time := range 2 {
 					for parallelism := range max(runtime.NumCPU(), 2) {
-						cfg := Config{
+						cfg := Parameter{
 							KeyLength:   uint32(keyLength + 4),
 							SaltLength:  uint32(saltLength + 1),
 							Memory:      uint32(math.Pow(2, float64(memory+10))),
@@ -51,10 +51,10 @@ func TestSimple(t *testing.T) {
 	}
 }
 
-func TestUpdateConfig(t *testing.T) {
+func TestUpdateParameter(t *testing.T) {
 	password := []byte("hunter2")
 
-	cfg := NewConfig()
+	cfg := ParameterSecondRecommendationByRFC9106()
 	cfg.Memory = 16
 	hash := cfg.GenerateFromPassword(password)
 	cfg2, err := CompareHashAndPassword(hash, password)
@@ -62,17 +62,18 @@ func TestUpdateConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg2.Memory++
-	cfg2.Time++
+	// update parameter
+	cfg2 = ParameterFirstRecommendationByRFC9106()
+	cfg2.Memory = 16
 
 	hash2 := cfg2.GenerateFromPassword(password)
 	if bytes.Equal(hash, hash2) {
-		t.Fatalf("%s == %s", hash, hash2)
+		t.Fatalf("hash mismatch after parameter update: %s == %s", hash, hash2)
 	}
 
 	cfg3, err := CompareHashAndPassword(hash2, password)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	if cfg3 != cfg2 {
 		t.Fatalf("\ngot\n\t%+v\nwant\n\t%+v", cfg3, cfg2)
