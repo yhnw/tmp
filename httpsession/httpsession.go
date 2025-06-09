@@ -283,23 +283,18 @@ func (m *Middleware[T]) Delete(ctx context.Context) error {
 	return nil
 }
 
-func (m *Middleware[T]) Renew(ctx context.Context) error {
-	return m.renewID(ctx, rand.Text())
-}
-
 // It is caller's responsibility to choose a unique id.
 
-func (m *Middleware[T]) RenewID(ctx context.Context, id string) error {
-	return m.renewID(ctx, id)
-}
-
-func (m *Middleware[T]) renewID(ctx context.Context, id string) error {
+func (m *Middleware[T]) Renew(ctx context.Context, id string) error {
 	r := m.recordFromContext(ctx)
 	err := m.Store.Delete(ctx, r.ID)
 	if err != nil {
 		return err
 	}
 
+	if id == "" {
+		id = rand.Text()
+	}
 	r.ID = id
 	r.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
 	return nil
