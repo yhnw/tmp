@@ -84,19 +84,19 @@ func randomSalt(len uint32) []byte {
 }
 
 // GenerateFromPassword returns the PHC string format of argon2id hash of the password.
-func (cfg Parameter) GenerateFromPassword(password []byte) []byte {
-	salt := getRandomSalt(cfg.SaltLength)
-	key := argon2.IDKey([]byte(password), salt, cfg.Time, cfg.Memory, cfg.Parallelism, cfg.KeyLength)
-	return fmt.Appendf(nil, "$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
-		argon2.Version, cfg.Memory, cfg.Time, cfg.Parallelism,
+func GenerateFromPassword[S ~string | []byte](param Parameter, password S) S {
+	salt := getRandomSalt(param.SaltLength)
+	key := argon2.IDKey([]byte(password), salt, param.Time, param.Memory, param.Parallelism, param.KeyLength)
+	return S(fmt.Appendf(nil, "$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version, param.Memory, param.Time, param.Parallelism,
 		base64.RawStdEncoding.EncodeToString(salt),
-		base64.RawStdEncoding.EncodeToString(key))
+		base64.RawStdEncoding.EncodeToString(key)))
 }
 
 // CompareHashAndPassword compares the PHC string format of an argon2id hashed password with its possible plaintext equivalent.
 // It returns parsed Parameter and nil on success, or the zero Parameter and an error on failure.
 // If a password and hash do not match, it returns the zero Parameter and ErrMismatchedHashAndPassword.
-func CompareHashAndPassword(hashedPassword, password []byte) (Parameter, error) {
+func CompareHashAndPassword[S1, S2 ~string | []byte](hashedPassword S1, password S2) (Parameter, error) {
 	fields := strings.Split(string(hashedPassword), "$")
 	if len(fields) != 6 {
 		return Parameter{}, fmt.Errorf("argon2id: invalid format %q", hashedPassword)
