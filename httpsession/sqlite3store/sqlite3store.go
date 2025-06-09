@@ -89,7 +89,6 @@ INSERT INTO httpsession (
 ) VALUES (?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
  	idle_deadline = excluded.idle_deadline,
- 	absolute_deadline = excluded.absolute_deadline,
  	data = excluded.data`
 
 func (s *SessionStore) Save(ctx context.Context, r *httpsession.Record) error {
