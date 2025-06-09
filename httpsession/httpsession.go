@@ -81,19 +81,21 @@ func NewMiddleware[T any]() *Middleware[T] {
 	}
 }
 
-func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration, errorHandler func(error)) {
-	if errorHandler == nil {
-		errorHandler = func(err error) {
-			slog.ErrorContext(ctx, "httpsession.DeleteExpiredInterval: "+err.Error())
-		}
-	}
+func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration) {
+	// func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration, errorHandler func(error)) {
+	// if errorHandler == nil {
+	// 	errorHandler = func(err error) {
+	// 		slog.ErrorContext(ctx, "httpsession.DeleteExpiredInterval: "+err.Error())
+	// 	}
+	// }
 	cleanup := func() {
 		c := time.Tick(interval)
 		for {
 			select {
 			case <-c:
 				if err := m.Store.DeleteExpired(ctx); err != nil {
-					errorHandler(err)
+					// errorHandler(err)
+					slog.ErrorContext(ctx, "httpsession.DeleteExpiredInterval: "+err.Error())
 				}
 			case <-ctx.Done():
 				return
