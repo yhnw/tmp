@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -79,23 +81,6 @@ func NewMiddleware[T any]() *Middleware[T] {
 		},
 		now: time.Now,
 	}
-}
-
-func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration) {
-	cleanup := func() {
-		c := time.Tick(interval)
-		for {
-			select {
-			case <-c:
-				if err := m.Store.DeleteExpired(ctx); err != nil {
-					slog.ErrorContext(ctx, "httpsession.DeleteExpiredInterval: "+err.Error())
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}
-	go cleanup()
 }
 
 // Handler returns a middleware that automatically tracks HTTP sessions.
@@ -261,6 +246,31 @@ func (m *Middleware[T]) newRecord() *Record {
 	}
 }
 
+func (m *Middleware[T]) Populate(idSessionPairs ...any) {
+	if l := len(idSessionPairs); l <= 0 || l%2 != 0 {
+		panic("Populate: args must have non-zero even length")
+	}
+	argPos := 1
+	for pair := range slices.Chunk(idSessionPairs, 2) {
+		id, ok := pair[0].(string)
+		if !ok {
+			panic(fmt.Sprintf("Populate: arg %v expected string but got %T", argPos, pair[0]))
+		}
+		session, ok := pair[1].(*T)
+		if !ok {
+			panic(fmt.Sprintf("Populate: arg %v expected %T but got %T", argPos+1, new(T), pair[1]))
+		}
+		record := m.newRecord()
+		record.ID = id
+		record.session = session
+		ctx := m.newContextWithRecord(context.Background(), record)
+		if _, err := m.saveRecord(ctx); err != nil {
+			panic("Populate: " + err.Error())
+		}
+		argPos += 2
+	}
+}
+
 func (m *Middleware[T]) Get(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
 	if r.session == nil {
@@ -298,6 +308,23 @@ func (m *Middleware[T]) Renew(ctx context.Context, id string) error {
 	r.ID = id
 	r.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
 	return nil
+}
+
+func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration) {
+	cleanup := func() {
+		c := time.Tick(interval)
+		for {
+			select {
+			case <-c:
+				if err := m.Store.DeleteExpired(ctx); err != nil {
+					slog.ErrorContext(ctx, "httpsession.DeleteExpiredInterval: "+err.Error())
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+	go cleanup()
 }
 
 // func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration, errorHandler func(error)) {

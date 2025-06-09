@@ -309,6 +309,83 @@ func TestID(t *testing.T) {
 	}
 }
 
+func TestPopulate(t *testing.T) {
+	store := newMemoryStore()
+	sess1 := &testSession{N: 1}
+	sess2 := &testSession{N: 2}
+	session := NewMiddleware[testSession]()
+	session.Store = store
+	session.Populate("sess1", sess1, "sess2", sess2)
+	if _, ok := store.m["sess1"]; !ok {
+		t.Error("sess1 not found")
+	}
+	if _, ok := store.m["sess2"]; !ok {
+		t.Error("sess2 not found")
+	}
+}
+
+func TestPopulatePanic(t *testing.T) {
+	store := newMemoryStore()
+	sess1 := &testSession{N: 1}
+	sess2 := &testSession{N: 2}
+	session := NewMiddleware[testSession]()
+	session.Store = store
+	tests := []struct {
+		name        string
+		wantRecover string
+		fn          func()
+	}{
+		{
+			name:        "zero args",
+			wantRecover: "Populate: args must have non-zero even length",
+			fn: func() {
+				session.Populate()
+			},
+		},
+		{
+			name:        "args odd length",
+			wantRecover: "Populate: args must have non-zero even length",
+			fn: func() {
+				session.Populate(1, 2, 3)
+			},
+		},
+		{
+			name:        "arg 1 int",
+			wantRecover: "Populate: arg 1 expected string but got int",
+			fn: func() {
+				session.Populate(0, sess1, "sess2", sess2)
+			},
+		},
+		{
+			name:        "arg 2 int",
+			wantRecover: "Populate: arg 2 expected *httpsession.testSession but got int",
+			fn: func() {
+				session.Populate("sess1", 0, "sess2", sess2)
+			},
+		},
+		{
+			name:        "arg 3 int",
+			wantRecover: "Populate: arg 3 expected string but got int",
+			fn: func() {
+				session.Populate("sess1", sess1, 0, sess2)
+			},
+		},
+		{
+			name:        "arg 4 int",
+			wantRecover: "Populate: arg 4 expected *httpsession.testSession but got int",
+			fn: func() {
+				session.Populate("sess1", sess1, "sess2", 0)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer wantPanic(t, tt.wantRecover)
+			tt.fn()
+		})
+	}
+}
+
 func TestMiddlewareRace(t *testing.T) {
 	synctest.Run(func() {
 		var errhCalled bool
