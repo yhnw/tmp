@@ -54,7 +54,7 @@ func TestSimple(t *testing.T) {
 func TestUpdateParameter(t *testing.T) {
 	password := []byte("hunter2")
 
-	param := ParameterSecondRecommendationByRFC9106()
+	param := ParameterSecondRecommended()
 	param.Memory = 16
 	hash := GenerateFromPassword(param, password)
 	param2, err := CompareHashAndPassword(hash, password)
@@ -63,7 +63,7 @@ func TestUpdateParameter(t *testing.T) {
 	}
 
 	// update parameter
-	param2 = ParameterFirstRecommendationByRFC9106()
+	param2 = ParameterFirstRecommended()
 	param2.Memory = 16
 
 	hash2 := GenerateFromPassword(param2, password)

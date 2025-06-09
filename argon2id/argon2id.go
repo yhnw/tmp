@@ -47,11 +47,11 @@ type Parameter struct {
 	SaltLength uint32
 }
 
-// ParameterFirstRecommendationByRFC9106 returns a new Parameter
+// ParameterFirstRecommended returns a new Parameter
 // with [RFC 9106's the FIRST RECOMMENDED option].
 //
 // [RFC 9106's the FIRST RECOMMENDED option]: https://www.rfc-editor.org/rfc/rfc9106.html#section-4-6.1
-func ParameterFirstRecommendationByRFC9106() Parameter {
+func ParameterFirstRecommended() Parameter {
 	return Parameter{
 		Memory:      2 * 1024 * 1024,
 		Time:        1,
@@ -61,11 +61,11 @@ func ParameterFirstRecommendationByRFC9106() Parameter {
 	}
 }
 
-// ParameterSecondRecommendationByRFC9106 returns a new Parameter
+// ParameterSecondRecommended returns a new Parameter
 // with [RFC 9106's the SECOND RECOMMENDED option].
 //
 // [RFC 9106's the SECOND RECOMMENDED option]: https://www.rfc-editor.org/rfc/rfc9106.html#section-4-6.2
-func ParameterSecondRecommendationByRFC9106() Parameter {
+func ParameterSecondRecommended() Parameter {
 	return Parameter{
 		Memory:      64 * 1024,
 		Time:        3,
