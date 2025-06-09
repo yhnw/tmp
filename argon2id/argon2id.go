@@ -84,13 +84,13 @@ func randomSalt(len uint32) []byte {
 }
 
 // GenerateFromPassword returns the PHC string format of argon2id hash of the password.
-func GenerateFromPassword[S ~string | []byte](param Parameter, password S) S {
+func GenerateFromPassword[S ~string | []byte](param Parameter, password S) []byte {
 	salt := getRandomSalt(param.SaltLength)
 	key := argon2.IDKey([]byte(password), salt, param.Time, param.Memory, param.Parallelism, param.KeyLength)
-	return S(fmt.Appendf(nil, "$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+	return fmt.Appendf(nil, "$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, param.Memory, param.Time, param.Parallelism,
 		base64.RawStdEncoding.EncodeToString(salt),
-		base64.RawStdEncoding.EncodeToString(key)))
+		base64.RawStdEncoding.EncodeToString(key))
 }
 
 // CompareHashAndPassword compares the PHC string format of an argon2id hashed password with its possible plaintext equivalent.
