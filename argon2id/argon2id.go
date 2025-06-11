@@ -84,7 +84,7 @@ func randomSalt(len uint32) []byte {
 }
 
 // GenerateFromPassword returns the PHC string format of argon2id hash of the password.
-func GenerateFromPassword[S ~string | []byte](param Parameter, password S) []byte {
+func GenerateFromPassword[Bytes ~string | ~[]byte](param Parameter, password Bytes) []byte {
 	salt := getRandomSalt(param.SaltLength)
 	key := argon2.IDKey([]byte(password), salt, param.Time, param.Memory, param.Parallelism, param.KeyLength)
 	return fmt.Appendf(nil, "$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
@@ -96,7 +96,7 @@ func GenerateFromPassword[S ~string | []byte](param Parameter, password S) []byt
 // CompareHashAndPassword compares the PHC string format of an argon2id hashed password with its possible plaintext equivalent.
 // It returns parsed Parameter and nil on success, or the zero Parameter and an error on failure.
 // If a password and hash do not match, it returns the zero Parameter and ErrMismatchedHashAndPassword.
-func CompareHashAndPassword[S1, S2 ~string | []byte](hashedPassword S1, password S2) (Parameter, error) {
+func CompareHashAndPassword[Bytes1, Bytes2 ~string | ~[]byte](hashedPassword Bytes1, password Bytes2) (Parameter, error) {
 	fields := strings.Split(string(hashedPassword), "$")
 	if len(fields) != 6 {
 		return Parameter{}, fmt.Errorf("argon2id: invalid format %q", hashedPassword)
