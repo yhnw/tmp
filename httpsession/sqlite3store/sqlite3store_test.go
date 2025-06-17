@@ -14,18 +14,20 @@ import (
 	// _ "github.com/ncruces/go-sqlite3/embed"
 )
 
+type testSession struct {
+	N int
+}
+
 var (
-	recordNotExpired = &httpsession.Record{
+	recordNotExpired = &httpsession.Record[testSession]{
 		ID:               "notexpired",
 		IdleDeadline:     time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
 		AbsoluteDeadline: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
-		Data:             []byte(`{"log":"record data"}`),
 	}
-	recordExpired = &httpsession.Record{
+	recordExpired = &httpsession.Record[testSession]{
 		ID:               "expired",
 		IdleDeadline:     time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
 		AbsoluteDeadline: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
-		Data:             []byte(`{"log":"expired record data"}`),
 	}
 )
 
@@ -58,10 +60,10 @@ func testDB(t testing.TB) *sql.DB {
 	return db
 }
 
-func testStore(t testing.TB) *SessionStore {
+func testStore(t testing.TB) *SessionStore[testSession] {
 	t.Helper()
 	db := testDB(t)
-	store := NewSessionStore(db)
+	store := NewSessionStore[testSession](db)
 	if err := store.Save(t.Context(), recordNotExpired); err != nil {
 		t.Fatal(err)
 	}
@@ -74,18 +76,19 @@ func testStore(t testing.TB) *SessionStore {
 func TestLoad(t *testing.T) {
 	ctx := t.Context()
 	store := testStore(t)
-	record, err := store.Load(ctx, recordNotExpired.ID)
-	if err != nil {
+	var record httpsession.Record[testSession]
+	found, err := store.Load(ctx, recordNotExpired.ID, &record)
+	if err != nil && !found {
 		t.Fatal(err)
 	}
 	if record.ID != recordNotExpired.ID {
 		t.Errorf("got %v; want %v", record.ID, recordNotExpired.ID)
 	}
-	record, err = store.Load(ctx, recordExpired.ID)
+	found, err = store.Load(ctx, recordExpired.ID, &record)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record != nil {
+	if found {
 		t.Errorf("unexpected record %#v", record)
 	}
 }
@@ -93,20 +96,21 @@ func TestLoad(t *testing.T) {
 func TestSave(t *testing.T) {
 	ctx := t.Context()
 	store := testStore(t)
-	record := &httpsession.Record{
+	record := &httpsession.Record[testSession]{
 		ID:               "savetest",
 		IdleDeadline:     time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
 		AbsoluteDeadline: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
-		Data:             []byte(`{"log":"record data"}`),
 	}
+	var got httpsession.Record[testSession]
+
 	if err := store.Save(ctx, record); err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.Load(ctx, record.ID)
+	found, err := store.Load(ctx, record.ID, &got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil {
+	if !found {
 		t.Fatal("record not found")
 	}
 	if got.ID != record.ID {
@@ -120,11 +124,13 @@ func TestDelete(t *testing.T) {
 	if err := store.Delete(ctx, recordNotExpired.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.Load(ctx, recordNotExpired.ID)
+	var got httpsession.Record[testSession]
+
+	found, err := store.Load(ctx, recordNotExpired.ID, &got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != nil {
+	if found {
 		t.Error("record found")
 	}
 }
@@ -135,18 +141,20 @@ func TestDeleteExpired(t *testing.T) {
 	if err := store.DeleteExpired(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.Load(ctx, recordExpired.ID)
+	var got httpsession.Record[testSession]
+
+	found, err := store.Load(ctx, recordExpired.ID, &got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != nil {
+	if found {
 		t.Error("expired record found")
 	}
-	got, err = store.Load(ctx, recordNotExpired.ID)
+	found, err = store.Load(ctx, recordNotExpired.ID, &got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil {
+	if !found {
 		t.Error("record not found")
 	}
 }

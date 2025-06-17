@@ -5,25 +5,21 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"sync"
 	"time"
-
-	"github.com/go-json-experiment/json"
 )
 
 // Store is the interface that stores session records.
-type Store interface {
+type Store[T any] interface {
 	// Load loads a session record associated with id.
 	// If found, it returns that record and nil.
 	// If not found, it returns nil, nil.
-	Load(ctx context.Context, id string) (*Record, error)
+	Load(ctx context.Context, id string, ret *Record[T]) (found bool, err error)
 
 	// Save saves r.
-	Save(ctx context.Context, r *Record) error
+	Save(ctx context.Context, r *Record[T]) error
 
 	// Delete deletes a session record associated with id.
 	Delete(ctx context.Context, id string) error
@@ -33,13 +29,13 @@ type Store interface {
 }
 
 // Record holds information about an HTTP session.
-type Record struct {
+type Record[T any] struct {
 	ID               string
 	IdleDeadline     time.Time
 	AbsoluteDeadline time.Time
-	Data             []byte
+	Session          T
 
-	session any // *T
+	deleted bool
 }
 
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
@@ -56,11 +52,12 @@ type Middleware[T any] struct {
 	AbsoluteTimeout time.Duration
 	// Cookie is used as a template for a Set-Cookie header.
 	Cookie       http.Cookie
-	Store        Store
+	Store        Store[T]
 	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 	activeSession sync.Map         // string -> struct{}
 	now           func() time.Time // for tests
+	pool          sync.Pool
 }
 
 // NewMiddleware returns a new instance of [Middleware] with default settings.
@@ -68,7 +65,7 @@ func NewMiddleware[T any]() *Middleware[T] {
 	return &Middleware[T]{
 		IdleTimeout:     24 * time.Hour,
 		AbsoluteTimeout: 7 * 24 * time.Hour,
-		Store:           newMemoryStore(),
+		Store:           newMemoryStore[T](),
 		ErrorHandler:    defaultErrorHandler,
 		Cookie: http.Cookie{
 			Name:        "id",
@@ -80,6 +77,11 @@ func NewMiddleware[T any]() *Middleware[T] {
 			Partitioned: false,
 		},
 		now: time.Now,
+		pool: sync.Pool{
+			New: func() any {
+				return new(Record[T])
+			},
+		},
 	}
 }
 
@@ -88,19 +90,24 @@ func NewMiddleware[T any]() *Middleware[T] {
 func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var (
-			record *Record
+			record *Record[T]
 			found  bool
 			err    error
 		)
+		record = m.pool.Get().(*Record[T])
+		*record = Record[T]{} // just in case
+		defer m.pool.Put(record)
 		if cookies := r.CookiesNamed(m.Cookie.Name); len(cookies) == 1 {
-			if record, err = m.Store.Load(r.Context(), cookies[0].Value); err != nil {
+			found, err = m.Store.Load(r.Context(), cookies[0].Value, record)
+			if err != nil {
 				m.ErrorHandler(w, r, err)
 				return
 			}
-			found = record != nil
 		}
 		if !found {
-			record = m.newRecord()
+			record.ID = rand.Text()
+			record.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
+			record.deleted = false
 		}
 
 		if _, loaded := m.activeSession.LoadOrStore(record.ID, struct{}{}); loaded {
@@ -109,14 +116,14 @@ func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 		}
 		defer m.activeSession.Delete(record.ID)
 
-		if found {
-			var session T
-			if err := json.Unmarshal(record.Data, &session); err != nil {
-				m.ErrorHandler(w, r, err)
-				return
-			}
-			record.session = &session
-		}
+		// if found {
+		// 	var session T
+		// 	if err := json.Unmarshal(record.Data, &session); err != nil {
+		// 		m.ErrorHandler(w, r, err)
+		// 		return
+		// 	}
+		// 	record.session = &session
+		// }
 
 		ctx := m.newContextWithRecord(r.Context(), record)
 		r = r.WithContext(ctx)
@@ -181,12 +188,12 @@ func (w *sessionWriter[T]) Unwrap() http.ResponseWriter {
 
 type recordContextKey[T any] struct{}
 
-func (m *Middleware[T]) newContextWithRecord(ctx context.Context, r *Record) context.Context {
+func (m *Middleware[T]) newContextWithRecord(ctx context.Context, r *Record[T]) context.Context {
 	return context.WithValue(ctx, recordContextKey[T]{}, r)
 }
 
-func (m *Middleware[T]) recordFromContext(ctx context.Context) *Record {
-	r, _ := ctx.Value(recordContextKey[T]{}).(*Record)
+func (m *Middleware[T]) recordFromContext(ctx context.Context) *Record[T] {
+	r, _ := ctx.Value(recordContextKey[T]{}).(*Record[T])
 	if r == nil {
 		panic("httpsession: middleware was not used")
 	}
@@ -206,7 +213,7 @@ func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) 
 	return nil
 }
 
-func (m *Middleware[T]) setCookie(w http.ResponseWriter, r *Record) {
+func (m *Middleware[T]) setCookie(w http.ResponseWriter, r *Record[T]) {
 	cookie := m.Cookie
 	cookie.Value = r.ID
 	cookie.MaxAge = int(r.IdleDeadline.Sub(m.now()).Seconds())
@@ -220,9 +227,9 @@ func (m *Middleware[T]) deleteCookie(w http.ResponseWriter) {
 }
 
 // If session was deleted, it returns record (session == nil) and nil.
-func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
+func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record[T], err error) {
 	r := m.recordFromContext(ctx)
-	if r.session == nil {
+	if r.deleted {
 		// session was deleted
 		return nil, nil
 	}
@@ -232,51 +239,54 @@ func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record, err error) {
 		r.IdleDeadline = r.AbsoluteDeadline
 	}
 
-	if r.Data, err = json.Marshal(r.session.(*T)); err != nil {
-		return nil, err
-	}
+	// if r.Data, err = json.Marshal(r.session.(*T)); err != nil {
+	// 	return nil, err
+	// }
 	return r, m.Store.Save(ctx, r)
 }
 
-func (m *Middleware[T]) newRecord() *Record {
-	return &Record{
-		ID:               rand.Text(),
-		AbsoluteDeadline: m.now().Add(m.AbsoluteTimeout),
-		session:          new(T),
-	}
-}
+// func (m *Middleware[T]) newRecord() *Record[T] {
+// 	r := m.pool.Get().(*Record[T])
+// 	r.ID = rand.Text()
+// 	r.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
+// 	return r
+// }
 
-func (m *Middleware[T]) Populate(idSessionPairs ...any) {
-	if l := len(idSessionPairs); l <= 0 || l%2 != 0 {
-		panic("Populate: args must have non-zero even length")
-	}
-	argPos := 1
-	for pair := range slices.Chunk(idSessionPairs, 2) {
-		id, ok := pair[0].(string)
-		if !ok {
-			panic(fmt.Sprintf("Populate: arg %v expected string but got %T", argPos, pair[0]))
-		}
-		session, ok := pair[1].(*T)
-		if !ok {
-			panic(fmt.Sprintf("Populate: arg %v expected %T but got %T", argPos+1, new(T), pair[1]))
-		}
-		record := m.newRecord()
-		record.ID = id
-		record.session = session
-		ctx := m.newContextWithRecord(context.Background(), record)
-		if _, err := m.saveRecord(ctx); err != nil {
-			panic("Populate: " + err.Error())
-		}
-		argPos += 2
-	}
-}
+// func (m *Middleware[T]) putRecord(r *Record[T]) {
+// 	m.pool.Put(r)
+// }
+
+// func (m *Middleware[T]) Populate(idSessionPairs ...any) {
+// 	if l := len(idSessionPairs); l <= 0 || l%2 != 0 {
+// 		panic("Populate: args must have non-zero even length")
+// 	}
+// 	argPos := 1
+// 	for pair := range slices.Chunk(idSessionPairs, 2) {
+// 		id, ok := pair[0].(string)
+// 		if !ok {
+// 			panic(fmt.Sprintf("Populate: arg %v expected string but got %T", argPos, pair[0]))
+// 		}
+// 		// session, ok := pair[1].(*T)
+// 		if !ok {
+// 			panic(fmt.Sprintf("Populate: arg %v expected %T but got %T", argPos+1, new(T), pair[1]))
+// 		}
+// 		record := m.newRecord()
+// 		record.ID = id
+// 		// record.session = session
+// 		ctx := m.newContextWithRecord(context.Background(), record)
+// 		if _, err := m.saveRecord(ctx); err != nil {
+// 			panic("Populate: " + err.Error())
+// 		}
+// 		argPos += 2
+// 	}
+// }
 
 func (m *Middleware[T]) Get(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
-	if r.session == nil {
+	if r.deleted {
 		panic("httpsession: session alreadly deleted")
 	}
-	return r.session.(*T)
+	return &r.Session
 }
 
 func (m *Middleware[T]) ID(ctx context.Context) string {
@@ -289,7 +299,9 @@ func (m *Middleware[T]) Delete(ctx context.Context) error {
 	if err := m.Store.Delete(ctx, r.ID); err != nil {
 		return err
 	}
-	r.session = nil
+	var zero T
+	r.Session = zero
+	r.deleted = true
 	return nil
 }
 

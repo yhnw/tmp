@@ -6,26 +6,26 @@ import (
 	"time"
 )
 
-type memoryStore struct {
+type memoryStore[T any] struct {
 	mu sync.RWMutex
-	m  map[string]Record
+	m  map[string]Record[T]
 }
 
-func newMemoryStore() *memoryStore {
-	return &memoryStore{m: make(map[string]Record)}
+func newMemoryStore[T any]() *memoryStore[T] {
+	return &memoryStore[T]{m: make(map[string]Record[T])}
 }
 
-func (s *memoryStore) Load(_ context.Context, id string) (*Record, error) {
+func (s *memoryStore[T]) Load(_ context.Context, id string, ret *Record[T]) (found bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	r, ok := s.m[id]
-	if !ok || time.Now().After(r.IdleDeadline) {
-		return nil, nil
+	*ret, found = s.m[id]
+	if !found || time.Now().After(ret.IdleDeadline) {
+		return false, nil
 	}
-	return &r, nil
+	return true, nil
 }
 
-func (s *memoryStore) Save(_ context.Context, r *Record) error {
+func (s *memoryStore[T]) Save(_ context.Context, r *Record[T]) error {
 	if time.Now().After(r.IdleDeadline) {
 		return nil
 	}
@@ -35,14 +35,14 @@ func (s *memoryStore) Save(_ context.Context, r *Record) error {
 	return nil
 }
 
-func (s *memoryStore) Delete(_ context.Context, id string) error {
+func (s *memoryStore[T]) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	delete(s.m, id)
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *memoryStore) DeleteExpired(_ context.Context) error {
+func (s *memoryStore[T]) DeleteExpired(_ context.Context) error {
 	s.mu.Lock()
 	now := time.Now()
 	for id, r := range s.m {
