@@ -423,7 +423,6 @@ func TestMiddlewareRace(t *testing.T) {
 		go func() {
 			h.ServeHTTP(w2, req2)
 		}()
-		// time.Sleep(1 * time.Millisecond)
 		synctest.Wait()
 		if !errhCalled {
 			t.Error("errorHandler was not called")
