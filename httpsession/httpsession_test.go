@@ -166,7 +166,7 @@ func TestMiddleware(t *testing.T) {
 		h.ServeHTTP(w, tt.req)
 		resp := w.Result()
 		for _, c := range resp.Cookies() {
-			if c.Name == session.Cookie.Name {
+			if c.Name == session.SetCookie.Name {
 				cookie = c
 				break
 			}

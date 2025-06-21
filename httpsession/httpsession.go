@@ -50,8 +50,8 @@ type Middleware[T any] struct {
 	// AbsoluteTimeout defines the maximum amount of time a session can be active.
 	// See https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md#absolute-timeout
 	AbsoluteTimeout time.Duration
-	// Cookie is used as a template for a Set-Cookie header.
-	Cookie       http.Cookie
+	// SetCookie is used as a template for a Set-SetCookie header.
+	SetCookie    http.Cookie
 	Store        Store[T]
 	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
@@ -67,7 +67,7 @@ func New[T any](store Store[T]) *Middleware[T] {
 		AbsoluteTimeout: 7 * 24 * time.Hour,
 		Store:           store,
 		ErrorHandler:    defaultErrorHandler,
-		Cookie: http.Cookie{
+		SetCookie: http.Cookie{
 			Name:        "id",
 			Path:        "/",
 			Domain:      "",
@@ -97,7 +97,7 @@ func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 		record = m.pool.Get().(*Record[T])
 		*record = Record[T]{} // just in case
 		defer m.pool.Put(record)
-		if cookies := r.CookiesNamed(m.Cookie.Name); len(cookies) == 1 {
+		if cookies := r.CookiesNamed(m.SetCookie.Name); len(cookies) == 1 {
 			found, err = m.Store.Load(r.Context(), cookies[0].Value, record)
 			if err != nil {
 				m.ErrorHandler(w, r, err)
@@ -214,14 +214,14 @@ func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) 
 }
 
 func (m *Middleware[T]) setCookie(w http.ResponseWriter, r *Record[T]) {
-	cookie := m.Cookie
+	cookie := m.SetCookie
 	cookie.Value = r.ID
 	cookie.MaxAge = int(r.IdleDeadline.Sub(m.now()).Seconds())
 	http.SetCookie(w, &cookie)
 }
 
 func (m *Middleware[T]) deleteCookie(w http.ResponseWriter) {
-	cookie := m.Cookie
+	cookie := m.SetCookie
 	cookie.MaxAge = -1
 	http.SetCookie(w, &cookie)
 }
