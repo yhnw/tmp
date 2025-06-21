@@ -60,12 +60,12 @@ type Middleware[T any] struct {
 	pool          sync.Pool
 }
 
-// NewMiddleware returns a new instance of [Middleware] with default settings.
-func NewMiddleware[T any]() *Middleware[T] {
+// New returns a new instance of [Middleware] with default settings.
+func New[T any](store Store[T]) *Middleware[T] {
 	return &Middleware[T]{
 		IdleTimeout:     24 * time.Hour,
 		AbsoluteTimeout: 7 * 24 * time.Hour,
-		Store:           newMemoryStore[T](),
+		Store:           store,
 		ErrorHandler:    defaultErrorHandler,
 		Cookie: http.Cookie{
 			Name:        "id",

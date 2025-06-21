@@ -11,7 +11,7 @@ type memoryStore[T any] struct {
 	m  map[string]Record[T]
 }
 
-func newMemoryStore[T any]() *memoryStore[T] {
+func NewMemoryStore[T any]() *memoryStore[T] {
 	return &memoryStore[T]{m: make(map[string]Record[T])}
 }
 

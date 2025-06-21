@@ -19,7 +19,7 @@ var expiredRecord = Record[testSession]{
 
 func testStore(t *testing.T) *memoryStore[testSession] {
 	t.Helper()
-	store := newMemoryStore[testSession]()
+	store := NewMemoryStore[testSession]()
 	store.m[validRecord.ID] = validRecord
 	store.m[expiredRecord.ID] = expiredRecord
 	return store
@@ -67,7 +67,7 @@ func TestMemoryStoreSave(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
-			store := newMemoryStore[testSession]()
+			store := NewMemoryStore[testSession]()
 			var r Record[testSession]
 			if err := store.Save(ctx, tt.record); err != nil {
 				t.Fatal(err)
