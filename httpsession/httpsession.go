@@ -43,8 +43,8 @@ func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
-// Middleware is a net/http middleware that automatically tracks HTTP sessions.
-type Middleware[T any] struct {
+// SessionStore is a net/http middleware that automatically tracks HTTP sessions.
+type SessionStore[T any] struct {
 	// IdleTimeout defines the amount of time a session will remain active.
 	IdleTimeout time.Duration
 	// AbsoluteTimeout defines the maximum amount of time a session can be active.
@@ -60,9 +60,9 @@ type Middleware[T any] struct {
 	pool          sync.Pool
 }
 
-// New returns a new instance of [Middleware] with default settings.
-func New[T any](store Store[T]) *Middleware[T] {
-	return &Middleware[T]{
+// New returns a new instance of [SessionStore] with default settings.
+func New[T any](store Store[T]) *SessionStore[T] {
+	return &SessionStore[T]{
 		IdleTimeout:     24 * time.Hour,
 		AbsoluteTimeout: 7 * 24 * time.Hour,
 		Store:           store,
@@ -87,7 +87,7 @@ func New[T any](store Store[T]) *Middleware[T] {
 
 // Handler returns a middleware that automatically tracks HTTP sessions.
 // After it was called, m's fields must not be mutated.
-func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
+func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var (
 			record *Record[T]
@@ -146,7 +146,7 @@ func (m *Middleware[T]) Handler(next http.Handler) http.Handler {
 type sessionWriter[T any] struct {
 	http.ResponseWriter
 	req *http.Request
-	mw  *Middleware[T]
+	mw  *SessionStore[T]
 
 	saved  bool
 	failed bool
@@ -188,11 +188,11 @@ func (w *sessionWriter[T]) Unwrap() http.ResponseWriter {
 
 type recordContextKey[T any] struct{}
 
-func (m *Middleware[T]) newContextWithRecord(ctx context.Context, r *Record[T]) context.Context {
+func (m *SessionStore[T]) newContextWithRecord(ctx context.Context, r *Record[T]) context.Context {
 	return context.WithValue(ctx, recordContextKey[T]{}, r)
 }
 
-func (m *Middleware[T]) recordFromContext(ctx context.Context) *Record[T] {
+func (m *SessionStore[T]) recordFromContext(ctx context.Context) *Record[T] {
 	r, _ := ctx.Value(recordContextKey[T]{}).(*Record[T])
 	if r == nil {
 		panic("httpsession: middleware was not used")
@@ -200,7 +200,7 @@ func (m *Middleware[T]) recordFromContext(ctx context.Context) *Record[T] {
 	return r
 }
 
-func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) error {
+func (m *SessionStore[T]) saveSession(ctx context.Context, w http.ResponseWriter) error {
 	r, err := m.saveRecord(ctx)
 	if err != nil {
 		return err
@@ -213,21 +213,21 @@ func (m *Middleware[T]) saveSession(ctx context.Context, w http.ResponseWriter) 
 	return nil
 }
 
-func (m *Middleware[T]) setCookie(w http.ResponseWriter, r *Record[T]) {
+func (m *SessionStore[T]) setCookie(w http.ResponseWriter, r *Record[T]) {
 	cookie := m.SetCookie
 	cookie.Value = r.ID
 	cookie.MaxAge = int(r.IdleDeadline.Sub(m.now()).Seconds())
 	http.SetCookie(w, &cookie)
 }
 
-func (m *Middleware[T]) deleteCookie(w http.ResponseWriter) {
+func (m *SessionStore[T]) deleteCookie(w http.ResponseWriter) {
 	cookie := m.SetCookie
 	cookie.MaxAge = -1
 	http.SetCookie(w, &cookie)
 }
 
 // If session was deleted, it returns record (session == nil) and nil.
-func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record[T], err error) {
+func (m *SessionStore[T]) saveRecord(ctx context.Context) (_ *Record[T], err error) {
 	r := m.recordFromContext(ctx)
 	if r.deleted {
 		// session was deleted
@@ -281,7 +281,7 @@ func (m *Middleware[T]) saveRecord(ctx context.Context) (_ *Record[T], err error
 // 	}
 // }
 
-func (m *Middleware[T]) Get(ctx context.Context) *T {
+func (m *SessionStore[T]) Get(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
 	if r.deleted {
 		panic("httpsession: session alreadly deleted")
@@ -289,12 +289,12 @@ func (m *Middleware[T]) Get(ctx context.Context) *T {
 	return &r.Session
 }
 
-func (m *Middleware[T]) ID(ctx context.Context) string {
+func (m *SessionStore[T]) ID(ctx context.Context) string {
 	r := m.recordFromContext(ctx)
 	return r.ID
 }
 
-func (m *Middleware[T]) Delete(ctx context.Context) error {
+func (m *SessionStore[T]) Delete(ctx context.Context) error {
 	r := m.recordFromContext(ctx)
 	if err := m.Store.Delete(ctx, r.ID); err != nil {
 		return err
@@ -307,7 +307,7 @@ func (m *Middleware[T]) Delete(ctx context.Context) error {
 
 // It is caller's responsibility to choose a unique id.
 
-func (m *Middleware[T]) Renew(ctx context.Context, id string) error {
+func (m *SessionStore[T]) Renew(ctx context.Context, id string) error {
 	r := m.recordFromContext(ctx)
 	err := m.Store.Delete(ctx, r.ID)
 	if err != nil {
@@ -322,7 +322,7 @@ func (m *Middleware[T]) Renew(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *Middleware[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration) {
+func (m *SessionStore[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration) {
 	cleanup := func() {
 		c := time.Tick(interval)
 		for {
