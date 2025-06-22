@@ -103,8 +103,11 @@ func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 			}
 		}
 		if !found {
+			var zero T
 			record.ID = rand.Text()
+			record.IdleDeadline = time.Time{}
 			record.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
+			record.Session = zero
 		}
 
 		if _, loaded := m.active.LoadOrStore(record.ID, struct{}{}); loaded {
@@ -115,7 +118,6 @@ func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 
 		ctx := m.newContextWithRecord(r.Context(), record)
 		r = r.WithContext(ctx)
-
 		sw := &sessionWriter[T]{
 			ResponseWriter: w,
 			req:            r,
