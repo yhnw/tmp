@@ -212,8 +212,8 @@ func TestMiddlewareNoWrite(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if got := len(store.m); got != 1 {
-		t.Errorf("got %v; want 1", got)
+	if got := len(store.m); got != 0 {
+		t.Errorf("got %v; want 0", got)
 	}
 }
 
@@ -225,6 +225,21 @@ func TestDeleteNoWrite(t *testing.T) {
 		if err := session.Delete(r.Context()); err != nil {
 			t.Fatal(err)
 		}
+	}))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if len(store.m) != 0 {
+		t.Fatalf("len(store.m) = %v; want 0", len(store.m))
+	}
+}
+
+func TestRead(t *testing.T) {
+	store := NewMemoryStore[testSession]()
+	session := New(NewMemoryStore[testSession]())
+	session.Store = store
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = session.Read(r.Context())
 	}))
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -403,6 +418,7 @@ func TestMiddlewareRace(t *testing.T) {
 		session := New(NewMemoryStore[testSession]())
 		session.ErrorHandler = errh
 		h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			session.Get(r.Context())
 			time.Sleep(1 * time.Millisecond)
 			w.Write(nil)
 		}))

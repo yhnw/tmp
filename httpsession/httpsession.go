@@ -14,11 +14,11 @@ import (
 // Store is the interface that stores session records.
 type Store[T any] interface {
 	// Load loads a session record associated with id.
-	// If found, it returns that record and nil.
-	// If not found, it returns nil, nil.
+	// If found, it returns true and nil.
+	// If not found, it returns false and nil.
 	Load(ctx context.Context, id string, ret *Record[T]) (found bool, err error)
 
-	// Save saves r.
+	// Save saves a session record r.
 	Save(ctx context.Context, r *Record[T]) error
 
 	// Delete deletes a session record associated with id.
@@ -35,7 +35,8 @@ type Record[T any] struct {
 	AbsoluteDeadline time.Time
 	Session          T
 
-	deleted bool
+	deleted  bool
+	readOnly bool
 }
 
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
@@ -50,14 +51,14 @@ type SessionStore[T any] struct {
 	// AbsoluteTimeout defines the maximum amount of time a session can be active.
 	// See https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md#absolute-timeout
 	AbsoluteTimeout time.Duration
-	// SetCookie is used as a template for a Set-SetCookie header.
+	// SetCookie is used as a template for a Set-Cookie header.
 	SetCookie    http.Cookie
 	Store        Store[T]
 	ErrorHandler func(w http.ResponseWriter, r *http.Request, err error)
 
-	activeSession sync.Map         // string -> struct{}
-	now           func() time.Time // for tests
-	pool          sync.Pool
+	active     sync.Map         // string -> struct{}
+	now        func() time.Time // for tests
+	recordPool sync.Pool
 }
 
 // New returns a new instance of [SessionStore] with default settings.
@@ -77,7 +78,7 @@ func New[T any](store Store[T]) *SessionStore[T] {
 			Partitioned: false,
 		},
 		now: time.Now,
-		pool: sync.Pool{
+		recordPool: sync.Pool{
 			New: func() any {
 				return new(Record[T])
 			},
@@ -89,14 +90,11 @@ func New[T any](store Store[T]) *SessionStore[T] {
 // After it was called, m's fields must not be mutated.
 func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var (
-			record *Record[T]
-			found  bool
-			err    error
-		)
-		record = m.pool.Get().(*Record[T])
-		*record = Record[T]{} // just in case
-		defer m.pool.Put(record)
+		record := m.getRecord()
+		defer m.putRecord(record)
+
+		var found bool
+		var err error
 		if cookies := r.CookiesNamed(m.SetCookie.Name); len(cookies) == 1 {
 			found, err = m.Store.Load(r.Context(), cookies[0].Value, record)
 			if err != nil {
@@ -107,23 +105,13 @@ func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 		if !found {
 			record.ID = rand.Text()
 			record.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
-			record.deleted = false
 		}
 
-		if _, loaded := m.activeSession.LoadOrStore(record.ID, struct{}{}); loaded {
+		if _, loaded := m.active.LoadOrStore(record.ID, struct{}{}); loaded {
 			m.ErrorHandler(w, r, errors.New("httpsession: active session alreadly exists"))
 			return
 		}
-		defer m.activeSession.Delete(record.ID)
-
-		// if found {
-		// 	var session T
-		// 	if err := json.Unmarshal(record.Data, &session); err != nil {
-		// 		m.ErrorHandler(w, r, err)
-		// 		return
-		// 	}
-		// 	record.session = &session
-		// }
+		defer m.active.Delete(record.ID)
 
 		ctx := m.newContextWithRecord(r.Context(), record)
 		r = r.WithContext(ctx)
@@ -135,9 +123,14 @@ func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(sw, r)
 
-		if !sw.saved && !sw.failed {
-			if _, err := m.saveRecord(r.Context()); err != nil {
-				m.ErrorHandler(w, r, err)
+		if !sw.done && !sw.failed {
+			ctx = r.Context()
+			record = m.recordFromContext(ctx)
+			if record.readOnly || record.deleted {
+				return
+			}
+			if err = m.saveRecord(ctx, record); err != nil {
+				slog.ErrorContext(ctx, "httpsession: failed to save a record: "+err.Error())
 			}
 		}
 	})
@@ -148,36 +141,50 @@ type sessionWriter[T any] struct {
 	req *http.Request
 	mw  *SessionStore[T]
 
-	saved  bool
+	done   bool
 	failed bool
 }
 
 func (w *sessionWriter[T]) Write(b []byte) (int, error) {
 	if w.failed {
-		return len(b), nil
+		panic("httpsession: (ResponseWriter).Write was called after a call to ErrorHandler")
 	}
-	if !w.saved {
-		if err := w.mw.saveSession(w.req.Context(), w.ResponseWriter); err != nil {
-			w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
-			w.failed = true
-			return len(b), nil
+	if !w.done {
+		ctx := w.req.Context()
+		record := w.mw.recordFromContext(ctx)
+		if record.deleted {
+			w.mw.deleteCookie(w)
+		} else if !record.readOnly {
+			if err := w.mw.saveRecord(ctx, record); err != nil {
+				w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
+				w.failed = true
+				return len(b), nil
+			}
+			w.mw.setCookie(w, record)
 		}
-		w.saved = true
+		w.done = true
 	}
 	return w.ResponseWriter.Write(b)
 }
 
 func (w *sessionWriter[T]) WriteHeader(code int) {
 	if w.failed {
-		return
+		panic("httpsession: (ResponseWriter).WriteHeader was called after a call to ErrorHandler")
 	}
-	if !w.saved {
-		if err := w.mw.saveSession(w.req.Context(), w.ResponseWriter); err != nil {
-			w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
-			w.failed = true
-			return
+	if !w.done {
+		ctx := w.req.Context()
+		record := w.mw.recordFromContext(ctx)
+		if record.deleted {
+			w.mw.deleteCookie(w)
+		} else if !record.readOnly {
+			if err := w.mw.saveRecord(ctx, record); err != nil {
+				w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
+				w.failed = true
+				return
+			}
+			w.mw.setCookie(w, record)
 		}
-		w.saved = true
+		w.done = true
 	}
 	w.ResponseWriter.WriteHeader(code)
 }
@@ -200,19 +207,6 @@ func (m *SessionStore[T]) recordFromContext(ctx context.Context) *Record[T] {
 	return r
 }
 
-func (m *SessionStore[T]) saveSession(ctx context.Context, w http.ResponseWriter) error {
-	r, err := m.saveRecord(ctx)
-	if err != nil {
-		return err
-	}
-	if r == nil {
-		m.deleteCookie(w)
-	} else {
-		m.setCookie(w, r)
-	}
-	return nil
-}
-
 func (m *SessionStore[T]) setCookie(w http.ResponseWriter, r *Record[T]) {
 	cookie := m.SetCookie
 	cookie.Value = r.ID
@@ -227,61 +221,35 @@ func (m *SessionStore[T]) deleteCookie(w http.ResponseWriter) {
 }
 
 // If session was deleted, it returns record (session == nil) and nil.
-func (m *SessionStore[T]) saveRecord(ctx context.Context) (_ *Record[T], err error) {
-	r := m.recordFromContext(ctx)
-	if r.deleted {
-		// session was deleted
-		return nil, nil
-	}
-
+func (m *SessionStore[T]) saveRecord(ctx context.Context, r *Record[T]) error {
 	r.IdleDeadline = m.now().Add(m.IdleTimeout)
 	if r.AbsoluteDeadline.Before(r.IdleDeadline) {
 		r.IdleDeadline = r.AbsoluteDeadline
 	}
-
-	// if r.Data, err = json.Marshal(r.session.(*T)); err != nil {
-	// 	return nil, err
-	// }
-	return r, m.Store.Save(ctx, r)
+	return m.Store.Save(ctx, r)
 }
 
-// func (m *Middleware[T]) newRecord() *Record[T] {
-// 	r := m.pool.Get().(*Record[T])
-// 	r.ID = rand.Text()
-// 	r.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
-// 	return r
-// }
+func (m *SessionStore[T]) getRecord() *Record[T] {
+	r := m.recordPool.Get().(*Record[T])
+	r.deleted = false
+	r.readOnly = true
+	return r
+}
 
-// func (m *Middleware[T]) putRecord(r *Record[T]) {
-// 	m.pool.Put(r)
-// }
-
-// func (m *Middleware[T]) Populate(idSessionPairs ...any) {
-// 	if l := len(idSessionPairs); l <= 0 || l%2 != 0 {
-// 		panic("Populate: args must have non-zero even length")
-// 	}
-// 	argPos := 1
-// 	for pair := range slices.Chunk(idSessionPairs, 2) {
-// 		id, ok := pair[0].(string)
-// 		if !ok {
-// 			panic(fmt.Sprintf("Populate: arg %v expected string but got %T", argPos, pair[0]))
-// 		}
-// 		// session, ok := pair[1].(*T)
-// 		if !ok {
-// 			panic(fmt.Sprintf("Populate: arg %v expected %T but got %T", argPos+1, new(T), pair[1]))
-// 		}
-// 		record := m.newRecord()
-// 		record.ID = id
-// 		// record.session = session
-// 		ctx := m.newContextWithRecord(context.Background(), record)
-// 		if _, err := m.saveRecord(ctx); err != nil {
-// 			panic("Populate: " + err.Error())
-// 		}
-// 		argPos += 2
-// 	}
-// }
+func (m *SessionStore[T]) putRecord(r *Record[T]) {
+	m.recordPool.Put(r)
+}
 
 func (m *SessionStore[T]) Get(ctx context.Context) *T {
+	r := m.recordFromContext(ctx)
+	if r.deleted {
+		panic("httpsession: session alreadly deleted")
+	}
+	r.readOnly = false
+	return &r.Session
+}
+
+func (m *SessionStore[T]) Read(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
 	if r.deleted {
 		panic("httpsession: session alreadly deleted")
@@ -299,8 +267,6 @@ func (m *SessionStore[T]) Delete(ctx context.Context) error {
 	if err := m.Store.Delete(ctx, r.ID); err != nil {
 		return err
 	}
-	var zero T
-	r.Session = zero
 	r.deleted = true
 	return nil
 }
@@ -319,6 +285,7 @@ func (m *SessionStore[T]) Renew(ctx context.Context, id string) error {
 	}
 	r.ID = id
 	r.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
+	r.readOnly = false
 	return nil
 }
 
@@ -359,4 +326,45 @@ func (m *SessionStore[T]) DeleteExpiredInterval(ctx context.Context, interval ti
 // 		}
 // 	}
 // 	go cleanup()
+// }
+
+// func (m *Middleware[T]) Populate(idSessionPairs ...any) {
+// 	if l := len(idSessionPairs); l <= 0 || l%2 != 0 {
+// 		panic("Populate: args must have non-zero even length")
+// 	}
+// 	argPos := 1
+// 	for pair := range slices.Chunk(idSessionPairs, 2) {
+// 		id, ok := pair[0].(string)
+// 		if !ok {
+// 			panic(fmt.Sprintf("Populate: arg %v expected string but got %T", argPos, pair[0]))
+// 		}
+// 		// session, ok := pair[1].(*T)
+// 		if !ok {
+// 			panic(fmt.Sprintf("Populate: arg %v expected %T but got %T", argPos+1, new(T), pair[1]))
+// 		}
+// 		record := m.newRecord()
+// 		record.ID = id
+// 		// record.session = session
+// 		ctx := m.newContextWithRecord(context.Background(), record)
+// 		if _, err := m.saveRecord(ctx); err != nil {
+// 			panic("Populate: " + err.Error())
+// 		}
+// 		argPos += 2
+// 	}
+// }
+
+// func (m *SessionStore[T]) saveSession(ctx context.Context, w http.ResponseWriter, record *Record[T]) error {
+// 	// r, err := m.saveRecord(ctx)
+// 	// if err != nil {
+// 	// 	return err
+// 	// }
+// 	if record.deleted {
+// 		m.deleteCookie(w)
+// 	} else {
+// 		if err := m.saveRecord(ctx, record); err != nil {
+// 			return err
+// 		}
+// 		m.setCookie(w, record)
+// 	}
+// 	return nil
 // }
