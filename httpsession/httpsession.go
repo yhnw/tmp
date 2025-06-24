@@ -39,6 +39,14 @@ type Record[T any] struct {
 	dirty   bool
 }
 
+func (r *Record[T]) init(deadline time.Time) {
+	var zero T
+	r.ID = rand.Text()
+	r.IdleDeadline = time.Time{} // just in case
+	r.AbsoluteDeadline = deadline
+	r.Session = zero
+}
+
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	slog.ErrorContext(r.Context(), "httpsession: "+err.Error())
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -61,6 +69,10 @@ type SessionStore[T any] struct {
 	recordPool sync.Pool
 }
 
+// https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md#session-id-name-fingerprinting
+
+const DefaultCookieName = "id"
+
 // New returns a new instance of [SessionStore] with default settings.
 func New[T any]() *SessionStore[T] {
 	return &SessionStore[T]{
@@ -69,7 +81,7 @@ func New[T any]() *SessionStore[T] {
 		Store:           newMemoryStore[T](),
 		ErrorHandler:    defaultErrorHandler,
 		SetCookie: http.Cookie{
-			Name:        "id",
+			Name:        DefaultCookieName,
 			Path:        "/",
 			Domain:      "",
 			HttpOnly:    true,
@@ -103,11 +115,7 @@ func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 			}
 		}
 		if !found {
-			var zero T
-			record.ID = rand.Text()
-			record.IdleDeadline = time.Time{}
-			record.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
-			record.Session = zero
+			record.init(m.now().Add(m.AbsoluteTimeout))
 		}
 
 		if _, loaded := m.active.LoadOrStore(record.ID, struct{}{}); loaded {
