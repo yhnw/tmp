@@ -14,7 +14,7 @@ type rwUnwrapper interface {
 	Unwrap() http.ResponseWriter
 }
 
-var _ rwUnwrapper = (*sessionWriter[testSession])(nil)
+var _ rwUnwrapper = (*sessionSaver[testSession])(nil)
 
 func wantPanic(t *testing.T, wantRecover any) {
 	t.Helper()

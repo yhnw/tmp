@@ -35,8 +35,8 @@ type Record[T any] struct {
 	AbsoluteDeadline time.Time
 	Session          T
 
-	deleted  bool
-	readOnly bool
+	deleted bool
+	dirty   bool
 }
 
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
@@ -118,27 +118,22 @@ func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 
 		ctx := m.newContextWithRecord(r.Context(), record)
 		r = r.WithContext(ctx)
-		sw := &sessionWriter[T]{
+		ss := &sessionSaver[T]{
 			ResponseWriter: w,
 			req:            r,
 			mw:             m,
 		}
-		next.ServeHTTP(sw, r)
+		next.ServeHTTP(ss, r)
 
-		if !sw.done && !sw.failed {
-			ctx = r.Context()
-			record = m.recordFromContext(ctx)
-			if record.readOnly || record.deleted {
-				return
-			}
-			if err = m.saveRecord(ctx, record); err != nil {
+		if !ss.done && !ss.failed {
+			if err = m.ensureSave(r.Context()); err != nil {
 				slog.ErrorContext(ctx, "httpsession: failed to save a record: "+err.Error())
 			}
 		}
 	})
 }
 
-type sessionWriter[T any] struct {
+type sessionSaver[T any] struct {
 	http.ResponseWriter
 	req *http.Request
 	mw  *SessionStore[T]
@@ -147,52 +142,61 @@ type sessionWriter[T any] struct {
 	failed bool
 }
 
-func (w *sessionWriter[T]) Write(b []byte) (int, error) {
+func (w *sessionSaver[T]) Write(b []byte) (int, error) {
 	if w.failed {
 		panic("httpsession: (ResponseWriter).Write was called after a call to ErrorHandler")
 	}
 	if !w.done {
-		ctx := w.req.Context()
-		record := w.mw.recordFromContext(ctx)
-		if record.deleted {
-			w.mw.deleteCookie(w)
-		} else if !record.readOnly {
-			if err := w.mw.saveRecord(ctx, record); err != nil {
-				w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
-				w.failed = true
-				return len(b), nil
-			}
-			w.mw.setCookie(w, record)
+		if err := w.mw.save(w.req.Context(), w.ResponseWriter); err != nil {
+			w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
+			w.failed = true
+			return 0, err
 		}
 		w.done = true
 	}
 	return w.ResponseWriter.Write(b)
 }
 
-func (w *sessionWriter[T]) WriteHeader(code int) {
+func (w *sessionSaver[T]) WriteHeader(code int) {
 	if w.failed {
 		panic("httpsession: (ResponseWriter).WriteHeader was called after a call to ErrorHandler")
 	}
 	if !w.done {
-		ctx := w.req.Context()
-		record := w.mw.recordFromContext(ctx)
-		if record.deleted {
-			w.mw.deleteCookie(w)
-		} else if !record.readOnly {
-			if err := w.mw.saveRecord(ctx, record); err != nil {
-				w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
-				w.failed = true
-				return
-			}
-			w.mw.setCookie(w, record)
+		if err := w.mw.save(w.req.Context(), w.ResponseWriter); err != nil {
+			w.mw.ErrorHandler(w.ResponseWriter, w.req, err)
+			w.failed = true
+			return
 		}
 		w.done = true
 	}
 	w.ResponseWriter.WriteHeader(code)
 }
 
-func (w *sessionWriter[T]) Unwrap() http.ResponseWriter {
+func (w *sessionSaver[T]) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+func (m *SessionStore[T]) ensureSave(ctx context.Context) error {
+	record := m.recordFromContext(ctx)
+	if !record.dirty || record.deleted {
+		return nil
+	}
+	return m.saveRecord(ctx, record)
+}
+
+func (m *SessionStore[T]) save(ctx context.Context, w http.ResponseWriter) error {
+	record := m.recordFromContext(ctx)
+	if !record.dirty {
+		// no-op
+	} else if record.deleted {
+		m.deleteCookie(w)
+	} else {
+		if err := m.saveRecord(ctx, record); err != nil {
+			return err
+		}
+		m.setCookie(w, record)
+	}
+	return nil
 }
 
 type recordContextKey[T any] struct{}
@@ -234,7 +238,7 @@ func (m *SessionStore[T]) saveRecord(ctx context.Context, r *Record[T]) error {
 func (m *SessionStore[T]) getRecord() *Record[T] {
 	r := m.recordPool.Get().(*Record[T])
 	r.deleted = false
-	r.readOnly = true
+	r.dirty = false
 	return r
 }
 
@@ -247,7 +251,7 @@ func (m *SessionStore[T]) Get(ctx context.Context) *T {
 	if r.deleted {
 		panic("httpsession: session alreadly deleted")
 	}
-	r.readOnly = false
+	r.dirty = true
 	return &r.Session
 }
 
@@ -270,6 +274,7 @@ func (m *SessionStore[T]) Delete(ctx context.Context) error {
 		return err
 	}
 	r.deleted = true
+	r.dirty = true
 	return nil
 }
 
@@ -287,7 +292,7 @@ func (m *SessionStore[T]) Renew(ctx context.Context, id string) error {
 	}
 	r.ID = id
 	r.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
-	r.readOnly = false
+	r.dirty = true
 	return nil
 }
 
