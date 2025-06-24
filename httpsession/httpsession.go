@@ -62,11 +62,11 @@ type SessionStore[T any] struct {
 }
 
 // New returns a new instance of [SessionStore] with default settings.
-func New[T any](store Store[T]) *SessionStore[T] {
+func New[T any]() *SessionStore[T] {
 	return &SessionStore[T]{
 		IdleTimeout:     24 * time.Hour,
 		AbsoluteTimeout: 7 * 24 * time.Hour,
-		Store:           store,
+		Store:           newMemoryStore[T](),
 		ErrorHandler:    defaultErrorHandler,
 		SetCookie: http.Cookie{
 			Name:        "id",

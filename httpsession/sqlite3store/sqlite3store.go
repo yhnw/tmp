@@ -12,14 +12,14 @@ import (
 	"github.com/yhnw/tmp/httpsession"
 )
 
-type SessionStore[T any] struct {
+type Store[T any] struct {
 	loadStmt          *sql.Stmt
 	saveStmt          *sql.Stmt
 	deleteStmt        *sql.Stmt
 	deleteExpiredStmt *sql.Stmt
 }
 
-func NewSessionStore[T any](db *sql.DB) *SessionStore[T] {
+func New[T any](db *sql.DB) *Store[T] {
 	loadStmt, err1 := db.Prepare(queryLoad)
 	saveStmt, err2 := db.Prepare(querySave)
 	deleteStmt, err3 := db.Prepare(queryDelete)
@@ -27,7 +27,7 @@ func NewSessionStore[T any](db *sql.DB) *SessionStore[T] {
 	if err := errors.Join(err1, err2, err3, err4); err != nil {
 		panic(fmt.Sprintf("sqlite3store.NewSessionStore: sql.DB.Prepare: %v", err))
 	}
-	return &SessionStore[T]{loadStmt, saveStmt, deleteStmt, deleteExpiredStmt}
+	return &Store[T]{loadStmt, saveStmt, deleteStmt, deleteExpiredStmt}
 }
 
 type rfc3339Nano time.Time
@@ -70,7 +70,7 @@ FROM
 WHERE
 	id = ? AND julianday(idle_deadline) > julianday('now')`
 
-func (s *SessionStore[T]) Load(ctx context.Context, id string, r *httpsession.Record[T]) (bool, error) {
+func (s *Store[T]) Load(ctx context.Context, id string, r *httpsession.Record[T]) (bool, error) {
 	var buf []byte
 	err := s.loadStmt.QueryRowContext(ctx, id).Scan(
 		&r.ID,
@@ -92,7 +92,7 @@ ON CONFLICT(id) DO UPDATE SET
  	idle_deadline = excluded.idle_deadline,
  	data = excluded.data`
 
-func (s *SessionStore[T]) Save(ctx context.Context, r *httpsession.Record[T]) error {
+func (s *Store[T]) Save(ctx context.Context, r *httpsession.Record[T]) error {
 	buf, err := json.Marshal(r.Session)
 	if err != nil {
 		return err
@@ -108,14 +108,14 @@ func (s *SessionStore[T]) Save(ctx context.Context, r *httpsession.Record[T]) er
 
 const queryDelete = `DELETE FROM httpsession WHERE id = ?`
 
-func (s *SessionStore[T]) Delete(ctx context.Context, id string) error {
+func (s *Store[T]) Delete(ctx context.Context, id string) error {
 	_, err := s.deleteStmt.ExecContext(ctx, id)
 	return err
 }
 
 const queryDeleteExpired = `DELETE FROM httpsession WHERE julianday(idle_deadline) <= julianday('now')`
 
-func (s *SessionStore[T]) DeleteExpired(ctx context.Context) error {
+func (s *Store[T]) DeleteExpired(ctx context.Context) error {
 	_, err := s.deleteExpiredStmt.ExecContext(ctx)
 	return err
 }

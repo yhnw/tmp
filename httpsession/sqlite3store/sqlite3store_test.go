@@ -60,10 +60,10 @@ func testDB(t testing.TB) *sql.DB {
 	return db
 }
 
-func testStore(t testing.TB) *SessionStore[testSession] {
+func testStore(t testing.TB) *Store[testSession] {
 	t.Helper()
 	db := testDB(t)
-	store := NewSessionStore[testSession](db)
+	store := New[testSession](db)
 	if err := store.Save(t.Context(), recordNotExpired); err != nil {
 		t.Fatal(err)
 	}

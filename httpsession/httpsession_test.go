@@ -36,8 +36,8 @@ type testSession struct {
 
 func TestMiddleware(t *testing.T) {
 	ctx := t.Context()
-	session := New(NewMemoryStore[testSession]())
-	store := NewMemoryStore[testSession]()
+	session := New[testSession]()
+	store := newMemoryStore[testSession]()
 	session.Store = store
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.RequestURI {
@@ -179,7 +179,7 @@ func TestMiddleware(t *testing.T) {
 }
 
 func TestGetBeforeHandler(t *testing.T) {
-	session := New(NewMemoryStore[testSession]())
+	session := New[testSession]()
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = session.Get(r.Context())
 	})
@@ -190,7 +190,7 @@ func TestGetBeforeHandler(t *testing.T) {
 }
 
 func TestGetAfterDelete(t *testing.T) {
-	session := New(NewMemoryStore[testSession]())
+	session := New[testSession]()
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := session.Delete(r.Context()); err != nil {
 			t.Fatal(err)
@@ -204,8 +204,8 @@ func TestGetAfterDelete(t *testing.T) {
 }
 
 func TestMiddlewareNoWrite(t *testing.T) {
-	store := NewMemoryStore[testSession]()
-	session := New(NewMemoryStore[testSession]())
+	store := newMemoryStore[testSession]()
+	session := New[testSession]()
 	session.Store = store
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	}))
@@ -218,8 +218,8 @@ func TestMiddlewareNoWrite(t *testing.T) {
 }
 
 func TestDeleteNoWrite(t *testing.T) {
-	store := NewMemoryStore[testSession]()
-	session := New(NewMemoryStore[testSession]())
+	store := newMemoryStore[testSession]()
+	session := New[testSession]()
 	session.Store = store
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := session.Delete(r.Context()); err != nil {
@@ -235,8 +235,8 @@ func TestDeleteNoWrite(t *testing.T) {
 }
 
 func TestRead(t *testing.T) {
-	store := NewMemoryStore[testSession]()
-	session := New(NewMemoryStore[testSession]())
+	store := newMemoryStore[testSession]()
+	session := New[testSession]()
 	session.Store = store
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = session.Read(r.Context())
@@ -250,7 +250,7 @@ func TestRead(t *testing.T) {
 }
 
 func TestGetAfterDeletePanic(t *testing.T) {
-	session := New(NewMemoryStore[testSession]())
+	session := New[testSession]()
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := session.Delete(r.Context()); err != nil {
 			t.Fatal(err)
@@ -264,7 +264,7 @@ func TestGetAfterDeletePanic(t *testing.T) {
 }
 
 func TestGetAfterRenew(t *testing.T) {
-	session := New(NewMemoryStore[testSession]())
+	session := New[testSession]()
 
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := session.Renew(r.Context(), ""); err != nil {
@@ -280,7 +280,7 @@ func TestGetAfterRenew(t *testing.T) {
 
 func TestRenewUpdateAbsoluteDeadline(t *testing.T) {
 	ctx := t.Context()
-	session := New(NewMemoryStore[testSession]())
+	session := New[testSession]()
 	now := time.Now()
 	session.now = func() time.Time { return now }
 	record := new(Record[testSession])
@@ -297,8 +297,8 @@ func TestRenewUpdateAbsoluteDeadline(t *testing.T) {
 }
 
 func TestRenewDelete(t *testing.T) {
-	store := NewMemoryStore[testSession]()
-	session := New(NewMemoryStore[testSession]())
+	store := newMemoryStore[testSession]()
+	session := New[testSession]()
 	session.Store = store
 	var oldID string
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +321,7 @@ func TestRenewDelete(t *testing.T) {
 
 func TestID(t *testing.T) {
 	ctx := t.Context()
-	session := New(NewMemoryStore[testSession]())
+	session := New[testSession]()
 	r := new(Record[testSession])
 	r.ID = "testid"
 	ctx = session.newContextWithRecord(ctx, r)
@@ -415,7 +415,7 @@ func TestMiddlewareRace(t *testing.T) {
 				errhCalled = true
 			}
 		}
-		session := New(NewMemoryStore[testSession]())
+		session := New[testSession]()
 		session.ErrorHandler = errh
 		h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			session.Get(r.Context())
