@@ -1,8 +1,11 @@
 package httpsession
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"testing"
 	"testing/synctest"
@@ -240,6 +243,21 @@ func TestRead(t *testing.T) {
 	session.Store = store
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = session.Read(r.Context())
+		w.Write(nil)
+	}))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if len(store.m) != 0 {
+		t.Fatalf("len(store.m) = %v; want 0", len(store.m))
+	}
+}
+func TestReadNoWrite(t *testing.T) {
+	store := newMemoryStore[testSession]()
+	session := New[testSession]()
+	session.Store = store
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = session.Read(r.Context())
 	}))
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -330,83 +348,6 @@ func TestID(t *testing.T) {
 	}
 }
 
-// func TestPopulate(t *testing.T) {
-// 	store := newMemoryStore[testSession]()
-// 	sess1 := &testSession{N: 1}
-// 	sess2 := &testSession{N: 2}
-// 	session := NewMiddleware[testSession]()
-// 	session.Store = store
-// 	session.Populate("sess1", sess1, "sess2", sess2)
-// 	if _, ok := store.m["sess1"]; !ok {
-// 		t.Error("sess1 not found")
-// 	}
-// 	if _, ok := store.m["sess2"]; !ok {
-// 		t.Error("sess2 not found")
-// 	}
-// }
-
-// func TestPopulatePanic(t *testing.T) {
-// 	store := newMemoryStore[testSession]()
-// 	sess1 := &testSession{N: 1}
-// 	sess2 := &testSession{N: 2}
-// 	session := NewMiddleware[testSession]()
-// 	session.Store = store
-// 	tests := []struct {
-// 		name        string
-// 		wantRecover string
-// 		fn          func()
-// 	}{
-// 		{
-// 			name:        "zero args",
-// 			wantRecover: "Populate: args must have non-zero even length",
-// 			fn: func() {
-// 				session.Populate()
-// 			},
-// 		},
-// 		{
-// 			name:        "args odd length",
-// 			wantRecover: "Populate: args must have non-zero even length",
-// 			fn: func() {
-// 				session.Populate(1, 2, 3)
-// 			},
-// 		},
-// 		{
-// 			name:        "arg 1 int",
-// 			wantRecover: "Populate: arg 1 expected string but got int",
-// 			fn: func() {
-// 				session.Populate(0, sess1, "sess2", sess2)
-// 			},
-// 		},
-// 		{
-// 			name:        "arg 2 int",
-// 			wantRecover: "Populate: arg 2 expected *httpsession.testSession but got int",
-// 			fn: func() {
-// 				session.Populate("sess1", 0, "sess2", sess2)
-// 			},
-// 		},
-// 		{
-// 			name:        "arg 3 int",
-// 			wantRecover: "Populate: arg 3 expected string but got int",
-// 			fn: func() {
-// 				session.Populate("sess1", sess1, 0, sess2)
-// 			},
-// 		},
-// 		{
-// 			name:        "arg 4 int",
-// 			wantRecover: "Populate: arg 4 expected *httpsession.testSession but got int",
-// 			fn: func() {
-// 				session.Populate("sess1", sess1, "sess2", 0)
-// 			},
-// 		},
-// 	}
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			defer wantPanic(t, tt.wantRecover)
-// 			tt.fn()
-// 		})
-// 	}
-// }
-
 func TestMiddlewareRace(t *testing.T) {
 	synctest.Run(func() {
 		var errhCalled bool
@@ -429,8 +370,8 @@ func TestMiddlewareRace(t *testing.T) {
 		cookie := res.Cookies()[0]
 		req1 := httptest.NewRequest("GET", "/", nil)
 		req2 := httptest.NewRequest("GET", "/", nil)
-		req1.Header.Set("Cookie", cookie.String())
-		req2.Header.Set("Cookie", cookie.String())
+		req1.AddCookie(cookie)
+		req2.AddCookie(cookie)
 
 		w1 := httptest.NewRecorder()
 		w2 := httptest.NewRecorder()
@@ -450,4 +391,141 @@ func TestMiddlewareRace(t *testing.T) {
 			t.Error("errorHandler was not called")
 		}
 	})
+}
+
+func TestResponseController(t *testing.T) {
+	session := New[testSession]()
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc := http.NewResponseController(w)
+		if err := rc.Flush(); err != nil {
+			t.Error(err)
+		}
+	}))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if !w.Flushed {
+		t.Errorf("Flush was not called")
+	}
+}
+
+type mockStore[T any] struct {
+	LoadFunc          func(context.Context, string, *Record[T]) (bool, error)
+	SaveFunc          func(context.Context, *Record[T]) error
+	DeleteFunc        func(context.Context, string) error
+	DeleteExpiredFunc func(context.Context) error
+}
+
+func (s *mockStore[T]) Load(ctx context.Context, id string, ret *Record[T]) (found bool, err error) {
+	if s.LoadFunc != nil {
+		return s.LoadFunc(ctx, id, ret)
+	}
+	return false, errors.ErrUnsupported
+}
+
+func (s *mockStore[T]) Save(ctx context.Context, r *Record[T]) error {
+	if s.SaveFunc != nil {
+		return s.SaveFunc(ctx, r)
+	}
+	return errors.ErrUnsupported
+}
+
+func (s *mockStore[T]) Delete(ctx context.Context, id string) error {
+	if s.DeleteFunc != nil {
+		return s.DeleteFunc(ctx, id)
+	}
+	return errors.ErrUnsupported
+}
+
+func (s *mockStore[T]) DeleteExpired(ctx context.Context) error {
+	if s.DeleteExpiredFunc != nil {
+		return s.DeleteExpiredFunc(ctx)
+	}
+	return errors.ErrUnsupported
+}
+
+func TestErrorHandler(t *testing.T) {
+	session := New[testSession]()
+	session.Store = &mockStore[testSession]{}
+	var called bool
+	session.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		called = true
+	}
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session.Get(r.Context())
+		w.Write(nil)
+	}))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if !called {
+		t.Error("ErrorHandler was not called")
+	}
+}
+
+func TestDefaultErrorHandler(t *testing.T) {
+	session := New[testSession]()
+	session.Store = &mockStore[testSession]{}
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session.Get(r.Context())
+		w.WriteHeader(200)
+	}))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 500 {
+		t.Errorf("got %v; want 500", w.Code)
+	}
+}
+
+func TestAbsoluteDeadline(t *testing.T) {
+	session := New[testSession]()
+	now := time.Now()
+	session.now = func() time.Time { return now }
+	session.AbsoluteTimeout = 0
+	var record *Record[testSession]
+	session.Store = &mockStore[testSession]{
+		SaveFunc: func(ctx context.Context, r *Record[testSession]) error {
+			record = r
+			return nil
+		},
+	}
+	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session.Get(r.Context())
+		w.Write(nil)
+	}))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if !record.IdleDeadline.Equal(now) {
+		t.Errorf("got %v; want %v", record.IdleDeadline, now)
+	}
+}
+
+func TestCleanup(t *testing.T) {
+	session := New[testSession]()
+	record := Record[testSession]{
+		ID: "testid",
+	}
+	if err := session.Store.Save(t.Context(), &record); err != nil {
+		t.Fatal(err)
+	}
+	session.Cleanup(t.Context(), 500*time.Microsecond)
+	time.Sleep(1 * time.Millisecond)
+	if found, err := session.Store.Load(t.Context(), record.ID, &record); err != nil || found {
+		t.Fatalf("Load() = %v, %t", err, found)
+	}
+}
+
+func TestCleanupNoLeak(t *testing.T) {
+	session := New[testSession]()
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(t.Context())
+	session.Cleanup(ctx, 1*time.Second)
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+	after := runtime.NumGoroutine()
+	if before != after {
+		t.Fatalf("%v => %v", before, after)
+	}
 }

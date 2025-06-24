@@ -30,13 +30,13 @@ type Store[T any] interface {
 
 // Record holds information about an HTTP session.
 type Record[T any] struct {
+	dirty   bool
+	deleted bool
+
 	ID               string
 	IdleDeadline     time.Time
 	AbsoluteDeadline time.Time
 	Session          T
-
-	deleted bool
-	dirty   bool
 }
 
 func (r *Record[T]) init(deadline time.Time) {
@@ -81,13 +81,12 @@ func New[T any]() *SessionStore[T] {
 		Store:           newMemoryStore[T](),
 		ErrorHandler:    defaultErrorHandler,
 		SetCookie: http.Cookie{
-			Name:        DefaultCookieName,
-			Path:        "/",
-			Domain:      "",
-			HttpOnly:    true,
-			Secure:      true,
-			SameSite:    http.SameSiteLaxMode,
-			Partitioned: false,
+			Name:     DefaultCookieName,
+			Path:     "/",
+			Domain:   "",
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
 		},
 		now: time.Now,
 		recordPool: sync.Pool{
@@ -113,6 +112,9 @@ func (m *SessionStore[T]) Handler(next http.Handler) http.Handler {
 				m.ErrorHandler(w, r, err)
 				return
 			}
+			// if found && record.IdleDeadline.Before(m.now()) {
+			// 	found = false
+			// }
 		}
 		if !found {
 			record.init(m.now().Add(m.AbsoluteTimeout))
@@ -304,7 +306,7 @@ func (m *SessionStore[T]) Renew(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *SessionStore[T]) DeleteExpiredInterval(ctx context.Context, interval time.Duration) {
+func (m *SessionStore[T]) Cleanup(ctx context.Context, interval time.Duration) {
 	cleanup := func() {
 		c := time.Tick(interval)
 		for {
