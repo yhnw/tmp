@@ -91,6 +91,8 @@ type SessionStore[T any] struct {
 
 // https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md#session-id-name-fingerprinting
 
+// DefaultCookieName is the default value of [SessionStore]'s
+// SetCookie.Name.
 const DefaultCookieName = "id"
 
 // New returns a new instance of [SessionStore] with default settings.
