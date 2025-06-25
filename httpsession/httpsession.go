@@ -30,13 +30,33 @@ type Store[T any] interface {
 
 // Record holds information about an HTTP session.
 type Record[T any] struct {
-	dirty   bool
-	deleted bool
+	bits uint8
 
 	ID               string
 	IdleDeadline     time.Time
 	AbsoluteDeadline time.Time
 	Session          T
+}
+
+const (
+	recordModified = 1 << iota
+	recordDeleted
+)
+
+func (r *Record[T]) readOnly() bool {
+	return r.bits&recordModified == 0
+}
+
+func (r *Record[T]) deleted() bool {
+	return r.bits&recordDeleted != 0
+}
+
+func (r *Record[T]) setBit(bit uint8, ok bool) {
+	if ok {
+		r.bits |= bit
+	} else {
+		r.bits &^= bit
+	}
 }
 
 func (r *Record[T]) init(deadline time.Time) {
@@ -188,7 +208,7 @@ func (w *sessionSaver[T]) Unwrap() http.ResponseWriter {
 
 func (m *SessionStore[T]) ensureSave(ctx context.Context) error {
 	record := m.recordFromContext(ctx)
-	if !record.dirty || record.deleted {
+	if record.deleted() || record.readOnly() {
 		return nil
 	}
 	return m.saveRecord(ctx, record)
@@ -196,10 +216,10 @@ func (m *SessionStore[T]) ensureSave(ctx context.Context) error {
 
 func (m *SessionStore[T]) save(ctx context.Context, w http.ResponseWriter) error {
 	record := m.recordFromContext(ctx)
-	if !record.dirty {
-		// no-op
-	} else if record.deleted {
+	if record.deleted() {
 		m.deleteCookie(w)
+	} else if record.readOnly() {
+		// no-op
 	} else {
 		if err := m.saveRecord(ctx, record); err != nil {
 			return err
@@ -247,8 +267,7 @@ func (m *SessionStore[T]) saveRecord(ctx context.Context, r *Record[T]) error {
 
 func (m *SessionStore[T]) getRecord() *Record[T] {
 	r := m.recordPool.Get().(*Record[T])
-	r.deleted = false
-	r.dirty = false
+	r.bits = 0
 	return r
 }
 
@@ -258,16 +277,16 @@ func (m *SessionStore[T]) putRecord(r *Record[T]) {
 
 func (m *SessionStore[T]) Get(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
-	if r.deleted {
+	if r.deleted() {
 		panic("httpsession: session alreadly deleted")
 	}
-	r.dirty = true
+	r.setBit(recordModified, true)
 	return &r.Session
 }
 
 func (m *SessionStore[T]) Read(ctx context.Context) *T {
 	r := m.recordFromContext(ctx)
-	if r.deleted {
+	if r.deleted() {
 		panic("httpsession: session alreadly deleted")
 	}
 	return &r.Session
@@ -283,8 +302,8 @@ func (m *SessionStore[T]) Delete(ctx context.Context) error {
 	if err := m.Store.Delete(ctx, r.ID); err != nil {
 		return err
 	}
-	r.deleted = true
-	r.dirty = true
+	r.setBit(recordDeleted, true)
+	r.setBit(recordModified, true)
 	return nil
 }
 
@@ -302,7 +321,7 @@ func (m *SessionStore[T]) Renew(ctx context.Context, id string) error {
 	}
 	r.ID = id
 	r.AbsoluteDeadline = m.now().Add(m.AbsoluteTimeout)
-	r.dirty = true
+	r.setBit(recordModified, true)
 	return nil
 }
 
