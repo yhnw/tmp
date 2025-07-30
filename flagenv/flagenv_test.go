@@ -166,6 +166,18 @@ func TestParse(t *testing.T) {
 			configFileFlagName: "config",
 			config: `
 			# comment
+			-access-key 🔑 # comment
+			`,
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, "🔑"; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+		{
+			configFileFlagName: "config",
+			config: `
+			# comment
 			-access-key=🔑 # comment
 			`,
 			checkFlags: func(flags *flags) {
@@ -389,6 +401,48 @@ func TestParseLoadFile(t *testing.T) {
 			checkErr: func(err error) {
 				if !strings.Contains(err.Error(), "missing arguments") {
 					t.Errorf("expected missing arguments error but got %q", err)
+				}
+			},
+		},
+		{
+			getArgs: func(file string) []string {
+				return []string{"--conf=" + file}
+			},
+			configFileFlagName: "conf",
+			config: `
+			-access-key 🔑 extra
+			`,
+			checkErr: func(err error) {
+				if !strings.Contains(err.Error(), "syntax error") {
+					t.Errorf("expected syntax error but got %q", err)
+				}
+			},
+		},
+		{
+			getArgs: func(file string) []string {
+				return []string{"--conf=" + file}
+			},
+			configFileFlagName: "conf",
+			config: `
+			ACCESS_KEY =🔑
+			`,
+			checkErr: func(err error) {
+				if !strings.Contains(err.Error(), "syntax error") {
+					t.Errorf("expected syntax error but got %q", err)
+				}
+			},
+		},
+		{
+			getArgs: func(file string) []string {
+				return []string{"--conf=" + file}
+			},
+			configFileFlagName: "conf",
+			config: `
+			ACCESS KEY =🔑
+			`,
+			checkErr: func(err error) {
+				if !strings.Contains(err.Error(), "syntax error") {
+					t.Errorf("expected syntax error but got %q", err)
 				}
 			},
 		},

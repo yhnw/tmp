@@ -75,14 +75,25 @@ func loadConfigFile(fileName string) (flags []string, envVars map[string]string,
 			continue
 		}
 		if flag := strings.HasPrefix(line, "-"); flag {
-			flagName, _, _ := strings.Cut(line[len("-"):], "=")
+			flagName, _, ok := strings.Cut(line[len("-"):], "=")
 			env := flagNameToEnvName(flagName)
 			if _, dup := dup[env]; dup {
 				return nil, nil, dupError(fileName, lineNumber, flagName)
 			}
 			dup[env] = struct{}{}
-			flags = append(flags, line)
+			if ok {
+				flags = append(flags, line)
+			} else {
+				fields := strings.Fields(line)
+				if len(fields) != 2 {
+					return nil, nil, syntaxError(fileName, lineNumber, "found extra characters")
+				}
+				flags = append(flags, fields...)
+			}
 		} else {
+			if fields := strings.Fields(line); len(fields) != 1 {
+				return nil, nil, syntaxError(fileName, lineNumber, "found space characters")
+			}
 			if envName, value, ok := strings.Cut(line, "="); ok {
 				if _, dup := dup[envName]; dup {
 					return nil, nil, dupError(fileName, lineNumber, envName)
@@ -106,4 +117,8 @@ func flagNameToEnvName(flagName string) string {
 
 func dupError(fileName string, lineNumber int, dup string) error {
 	return fmt.Errorf("%s:%d: duplicate error: %q", fileName, lineNumber, dup)
+}
+
+func syntaxError(fileName string, lineNumber int, reason string) error {
+	return fmt.Errorf("%s:%d: syntax error: %s", fileName, lineNumber, reason)
 }
