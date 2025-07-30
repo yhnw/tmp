@@ -57,6 +57,28 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			args: []string{"--", "-access-key", "asdf"},
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, defaultFlags.accessKey; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+		{
+			getEnv: func(key string) string {
+				if key == "ACCESS_KEY" {
+					return "env"
+				}
+				return ""
+			},
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, "env"; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+		{
+			args: []string{"--"},
 			getEnv: func(key string) string {
 				if key == "ACCESS_KEY" {
 					return "env"
@@ -79,6 +101,20 @@ func TestParse(t *testing.T) {
 			},
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, "asdf"; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+		{
+			args: []string{"--", "-access-key", "asdf"},
+			getEnv: func(key string) string {
+				if key == "ACCESS_KEY" {
+					return "env"
+				}
+				return ""
+			},
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, "env"; g != w {
 					t.Errorf("got %s, want %s", g, w)
 				}
 			},
@@ -226,6 +262,18 @@ func TestParse(t *testing.T) {
 				}
 			},
 		},
+		{
+			configFileFlagName: "config",
+			config: `
+			-access-key=🔑
+			ACCESS_KEY
+				`,
+			checkErr: func(err error) {
+				if !strings.Contains(err.Error(), "missing =") {
+					t.Errorf("expected missing arguments error but got %q", err)
+				}
+			},
+		},
 	}
 	tempDir := t.TempDir()
 	for _, tt := range tests {
@@ -247,6 +295,9 @@ func TestParse(t *testing.T) {
 				tt.args = append([]string{fmt.Sprintf("-%s=%s", tt.configFileFlagName, f.Name())}, tt.args...)
 			}
 			err := Parse(fs, tt.args, tt.getEnv, tt.configFileFlagName, tt.envVarPrefix)
+			if (err == nil) && (tt.checkErr != nil) {
+				t.Fatalf("expected error but got nil")
+			}
 			if err != nil {
 				if tt.checkErr != nil {
 					tt.checkErr(err)
@@ -363,6 +414,9 @@ func TestParseLoadFile(t *testing.T) {
 				args = tt.getArgs(f.Name())
 			}
 			err := Parse(fs, args, tt.getEnv, tt.configFileFlagName, "")
+			if (err == nil) && (tt.checkErr != nil) {
+				t.Fatalf("expected error but got nil")
+			}
 			if err != nil {
 				if tt.checkErr != nil {
 					tt.checkErr(err)

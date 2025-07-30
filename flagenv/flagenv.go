@@ -2,6 +2,7 @@ package flagenv
 
 import (
 	"cmp"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -88,6 +89,8 @@ func loadConfigFile(fileName string) (flags []string, envVars map[string]string,
 				}
 				dup[envName] = struct{}{}
 				envVars[envName] = value
+			} else {
+				return nil, nil, errors.New("missing =")
 			}
 		}
 	}
