@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,7 @@ func TestParse(t *testing.T) {
 	tests := []struct {
 		name               string
 		args               []string
-		getEnv             func(string) string
+		env                []string
 		configFileFlagName string
 		config             string
 		envVarPrefix       string
@@ -65,12 +66,7 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			getEnv: func(key string) string {
-				if key == "ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env: []string{"ACCESS_KEY", "env"},
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, "env"; g != w {
 					t.Errorf("got %s, want %s", g, w)
@@ -79,12 +75,7 @@ func TestParse(t *testing.T) {
 		},
 		{
 			args: []string{"--"},
-			getEnv: func(key string) string {
-				if key == "ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env:  []string{"ACCESS_KEY", "env"},
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, "env"; g != w {
 					t.Errorf("got %s, want %s", g, w)
@@ -93,12 +84,7 @@ func TestParse(t *testing.T) {
 		},
 		{
 			args: []string{"-access-key", "asdf"},
-			getEnv: func(key string) string {
-				if key == "ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env:  []string{"ACCESS_KEY", "env"},
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, "asdf"; g != w {
 					t.Errorf("got %s, want %s", g, w)
@@ -107,12 +93,7 @@ func TestParse(t *testing.T) {
 		},
 		{
 			args: []string{"--", "-access-key", "asdf"},
-			getEnv: func(key string) string {
-				if key == "ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env:  []string{"ACCESS_KEY", "env"},
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, "env"; g != w {
 					t.Errorf("got %s, want %s", g, w)
@@ -121,12 +102,7 @@ func TestParse(t *testing.T) {
 		},
 		{
 			envVarPrefix: "PREFIX_",
-			getEnv: func(key string) string {
-				if key == "ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env:          []string{"ACCESS_KEY", "env"},
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, defaultFlags.accessKey; g != w {
 					t.Errorf("got %s, want %s", g, w)
@@ -135,12 +111,8 @@ func TestParse(t *testing.T) {
 		},
 		{
 			envVarPrefix: "PREFIX_",
-			getEnv: func(key string) string {
-				if key == "PREFIX_ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env:          []string{"PREFIX_ACCESS_KEY", "env"},
+
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, "env"; g != w {
 					t.Errorf("got %s, want %s", g, w)
@@ -150,12 +122,7 @@ func TestParse(t *testing.T) {
 		{
 			envVarPrefix: "PREFIX_",
 			args:         []string{"-access-key", "asdf"},
-			getEnv: func(key string) string {
-				if key == "ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env:          []string{"ACCESS_KEY", "env"},
 			checkFlags: func(flags *flags) {
 				if g, w := flags.accessKey, "asdf"; g != w {
 					t.Errorf("got %s, want %s", g, w)
@@ -222,12 +189,7 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			getEnv: func(key string) string {
-				if key == "ACCESS_KEY" {
-					return "env"
-				}
-				return ""
-			},
+			env:                []string{"ACCESS_KEY", "env"},
 			configFileFlagName: "config",
 			config: `
 			-access-key=🔑
@@ -291,9 +253,6 @@ func TestParse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs, flags := newFlagSet()
-			if tt.getEnv == nil {
-				tt.getEnv = os.Getenv
-			}
 			if tt.configFileFlagName != "" {
 				f, err := os.CreateTemp(tempDir, "")
 				if err != nil {
@@ -306,7 +265,10 @@ func TestParse(t *testing.T) {
 				}
 				tt.args = append([]string{fmt.Sprintf("-%s=%s", tt.configFileFlagName, f.Name())}, tt.args...)
 			}
-			err := Parse(fs, tt.args, tt.getEnv, tt.configFileFlagName, tt.envVarPrefix)
+			for v := range slices.Chunk(tt.env, 2) {
+				t.Setenv(v[0], v[1])
+			}
+			err := Parse(fs, tt.args, tt.configFileFlagName, tt.envVarPrefix)
 			if (err == nil) && (tt.checkErr != nil) {
 				t.Fatalf("expected error but got nil")
 			}
@@ -328,7 +290,6 @@ func TestParseLoadFile(t *testing.T) {
 	tests := []struct {
 		name               string
 		getArgs            func(string) []string
-		getEnv             func(string) string
 		configFileFlagName string
 		config             string
 		checkErr           func(error)
@@ -451,9 +412,6 @@ func TestParseLoadFile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs, flags := newFlagSet()
-			if tt.getEnv == nil {
-				tt.getEnv = os.Getenv
-			}
 			var args []string
 			if tt.configFileFlagName != "" {
 				f, err := os.CreateTemp(tempDir, "")
@@ -467,7 +425,124 @@ func TestParseLoadFile(t *testing.T) {
 				}
 				args = tt.getArgs(f.Name())
 			}
-			err := Parse(fs, args, tt.getEnv, tt.configFileFlagName, "")
+			err := Parse(fs, args, tt.configFileFlagName, "")
+			if (err == nil) && (tt.checkErr != nil) {
+				t.Fatalf("expected error but got nil")
+			}
+			if err != nil {
+				if tt.checkErr != nil {
+					tt.checkErr(err)
+				} else {
+					t.Fatal(err)
+				}
+			}
+			if tt.checkFlags != nil {
+				tt.checkFlags(flags)
+			}
+		})
+	}
+}
+
+func TestParseLoadFileFromEnvVar(t *testing.T) {
+	tests := []struct {
+		name               string
+		getArgs            func(string) []string
+		configFileFlagName string
+		config             string
+		configEnv          string
+		envVarPrefix       string
+		checkErr           func(error)
+		checkFlags         func(*flags)
+	}{
+		{
+			configFileFlagName: "conf",
+			configEnv: `
+			-access-key=env
+			`,
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, "env"; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+		{
+			envVarPrefix:       "PREFIX_",
+			configFileFlagName: "conf",
+			configEnv: `
+			-access-key=env
+			`,
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, "env"; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+		{
+			getArgs: func(file string) []string {
+				return []string{"-conf", file}
+			},
+			configFileFlagName: "conf",
+			configEnv: `
+			-access-key=env
+			`,
+			config: `
+			-access-key=🔑
+			`,
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, "🔑"; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+		{
+			envVarPrefix: "PREFIX_",
+			getArgs: func(file string) []string {
+				return []string{"-conf", file}
+			},
+			configFileFlagName: "conf",
+			configEnv: `
+			-access-key=env
+			`,
+			config: `
+			-access-key=🔑
+			`,
+			checkFlags: func(flags *flags) {
+				if g, w := flags.accessKey, "🔑"; g != w {
+					t.Errorf("got %s, want %s", g, w)
+				}
+			},
+		},
+	}
+	tempDir := t.TempDir()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs, flags := newFlagSet()
+			var args []string
+			if tt.configEnv != "" {
+				f, err := os.CreateTemp(tempDir, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				_, err = io.Copy(f, strings.NewReader(tt.configEnv))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv(tt.envVarPrefix+strings.ToUpper(tt.configFileFlagName), f.Name())
+			}
+			if tt.config != "" {
+				f, err := os.CreateTemp(tempDir, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				_, err = io.Copy(f, strings.NewReader(tt.config))
+				if err != nil {
+					t.Fatal(err)
+				}
+				args = tt.getArgs(f.Name())
+			}
+			err := Parse(fs, args, tt.configFileFlagName, tt.envVarPrefix)
 			if (err == nil) && (tt.checkErr != nil) {
 				t.Fatalf("expected error but got nil")
 			}

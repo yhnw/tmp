@@ -12,7 +12,6 @@ import (
 func Parse(
 	fs *flag.FlagSet,
 	argsWithoutProgramName []string,
-	getEnv func(string) string,
 	configFileFlagName string,
 	envVarPrefix string,
 ) error {
@@ -23,35 +22,37 @@ func Parse(
 		err             error
 	)
 
-	if getEnv == nil {
-		getEnv = os.Getenv
-	}
-
-	if len(args) > 0 && configFileFlagName != "" {
-		if arg, ok := strings.CutPrefix(args[0], "-"); ok {
-			arg, _ = strings.CutPrefix(arg, "-")
-			flagName, value, ok := strings.Cut(arg, "=")
-			if flagName == configFileFlagName {
-				args = args[1:]
-				if !ok && len(args) == 0 {
-					return fmt.Errorf("flagenv: missing arguments to -%s", configFileFlagName)
-				}
-				fileName := value
-				if !ok {
-					fileName = args[0]
+	if configFileFlagName != "" {
+		configPath := os.Getenv(envVarPrefix + flagNameToEnvName(configFileFlagName))
+		if len(args) > 0 {
+			if arg, ok := strings.CutPrefix(args[0], "-"); ok {
+				arg, _ = strings.CutPrefix(arg, "-")
+				flagName, value, ok := strings.Cut(arg, "=")
+				if flagName == configFileFlagName {
 					args = args[1:]
+					if !ok && len(args) == 0 {
+						return fmt.Errorf("flagenv: missing arguments to -%s", configFileFlagName)
+					}
+					fileName := value
+					if !ok {
+						fileName = args[0]
+						args = args[1:]
+					}
+					configPath = fileName
 				}
-				flagsFromFile, envVarsFromFile, err = loadConfigFile(fileName)
-				if err != nil {
-					return fmt.Errorf("flagenv: failed to load config file: %v", err)
-				}
+			}
+		}
+		if configPath != "" {
+			flagsFromFile, envVarsFromFile, err = loadConfigFile(configPath)
+			if err != nil {
+				return fmt.Errorf("flagenv: failed to load config file: %v", err)
 			}
 		}
 	}
 
 	fs.VisitAll(func(f *flag.Flag) {
 		name := envVarPrefix + flagNameToEnvName(f.Name)
-		if env := cmp.Or(getEnv(name), envVarsFromFile[name]); env != "" {
+		if env := cmp.Or(os.Getenv(name), envVarsFromFile[name]); env != "" {
 			flagsFromFile = append(flagsFromFile, fmt.Sprintf("-%s=%s", f.Name, env))
 		}
 	})
