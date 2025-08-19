@@ -19,6 +19,7 @@ func Parse(
 		args            = argsWithoutProgramName
 		flagsFromFile   []string
 		envVarsFromFile map[string]string
+		envVars         map[string]bool
 		err             error
 	)
 
@@ -35,6 +36,7 @@ func Parse(
 					}
 					fileName := value
 					if !ok {
+						// -config path
 						fileName = args[0]
 						args = args[1:]
 					}
@@ -50,19 +52,42 @@ func Parse(
 		}
 	}
 
+	if envVarsFromFile != nil {
+		envVars = make(map[string]bool)
+		for name := range envVarsFromFile {
+			envVars[name] = true
+		}
+	}
+
 	fs.VisitAll(func(f *flag.Flag) {
 		name := envVarPrefix + flagNameToEnvName(f.Name)
+		if envVars != nil {
+			envVars[name] = false
+		}
 		if env := cmp.Or(os.Getenv(name), envVarsFromFile[name]); env != "" {
 			flagsFromFile = append(flagsFromFile, fmt.Sprintf("-%s=%s", f.Name, env))
 		}
 	})
+
+	if envVars != nil {
+		var unknown []string
+		for name, notFound := range envVars {
+			if notFound {
+				unknown = append(unknown, name)
+			}
+		}
+		if len(unknown) > 0 {
+			return fmt.Errorf("flagenv: unknown env vars: %v", unknown)
+		}
+	}
+
 	args = append(flagsFromFile, args...)
 	return fs.Parse(args)
 }
 
 func loadConfigFile(fileName string) (flags []string, envVars map[string]string, err error) {
-	envVars = map[string]string{}
-	dup := map[string]struct{}{}
+	envVars = make(map[string]string)
+	envNames := make(map[string]struct{})
 	b, err := os.ReadFile(fileName)
 	if err != nil {
 		return nil, nil, err
@@ -77,14 +102,16 @@ func loadConfigFile(fileName string) (flags []string, envVars map[string]string,
 		}
 		if flag := strings.HasPrefix(line, "-"); flag {
 			flagName, _, ok := strings.Cut(line[len("-"):], "=")
-			env := flagNameToEnvName(flagName)
-			if _, dup := dup[env]; dup {
+			envName := flagNameToEnvName(flagName)
+			if _, dup := envNames[envName]; dup {
 				return nil, nil, dupError(fileName, lineNumber, flagName)
 			}
-			dup[env] = struct{}{}
+			envNames[envName] = struct{}{}
 			if ok {
+				// -name=value
 				flags = append(flags, line)
 			} else {
+				// -name value
 				fields := strings.Fields(line)
 				if len(fields) != 2 {
 					return nil, nil, syntaxError(fileName, lineNumber, "found extra characters")
@@ -95,14 +122,14 @@ func loadConfigFile(fileName string) (flags []string, envVars map[string]string,
 			if fields := strings.Fields(line); len(fields) != 1 {
 				return nil, nil, syntaxError(fileName, lineNumber, "found space characters")
 			}
-			if envName, value, ok := strings.Cut(line, "="); ok {
-				if _, dup := dup[envName]; dup {
+			if envName, value, ok := strings.Cut(line, "="); !ok {
+				return nil, nil, errors.New("missing =")
+			} else {
+				if _, dup := envNames[envName]; dup {
 					return nil, nil, dupError(fileName, lineNumber, envName)
 				}
-				dup[envName] = struct{}{}
+				envNames[envName] = struct{}{}
 				envVars[envName] = value
-			} else {
-				return nil, nil, errors.New("missing =")
 			}
 		}
 	}

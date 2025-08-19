@@ -165,6 +165,17 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			configFileFlagName: "config",
+			config: `
+			AAA=🔑
+			`,
+			checkErr: func(err error) {
+				if !strings.Contains(err.Error(), "unknown") {
+					t.Errorf("expected missing arguments error but got %q", err)
+				}
+			},
+		},
+		{
 			envVarPrefix:       "PREFIX_",
 			configFileFlagName: "config",
 			config: `
@@ -181,10 +192,11 @@ func TestParse(t *testing.T) {
 			configFileFlagName: "config",
 			config: `
 			ACCESS_KEY=🔑
+			ACCESS_KEY2=🔑
 			`,
-			checkFlags: func(flags *flags) {
-				if g, w := flags.accessKey, defaultFlags.accessKey; g != w {
-					t.Errorf("got %s, want %s", g, w)
+			checkErr: func(err error) {
+				if !strings.Contains(err.Error(), "unknown") {
+					t.Errorf("expected missing arguments error but got %q", err)
 				}
 			},
 		},
