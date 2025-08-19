@@ -9,46 +9,40 @@ import (
 	"strings"
 )
 
-func Parse(
-	fs *flag.FlagSet,
-	argsWithoutProgramName []string,
-	configFileFlagName string,
-	envVarPrefix string,
-) error {
+const configFileFlagName = "config"
+
+func Parse(fs *flag.FlagSet, args []string, envPrefix string) error {
 	var (
-		args            = argsWithoutProgramName
 		flagsFromFile   []string
 		envVarsFromFile map[string]string
 		envVars         map[string]bool
 		err             error
 	)
 
-	if configFileFlagName != "" {
-		configPath := os.Getenv(envVarPrefix + flagNameToEnvName(configFileFlagName))
-		if len(args) > 0 {
-			if arg, ok := strings.CutPrefix(args[0], "-"); ok {
-				arg, _ = strings.CutPrefix(arg, "-")
-				flagName, value, ok := strings.Cut(arg, "=")
-				if flagName == configFileFlagName {
-					args = args[1:]
-					if !ok && len(args) == 0 {
-						return fmt.Errorf("flagenv: missing arguments to -%s", configFileFlagName)
-					}
-					fileName := value
-					if !ok {
-						// -config path
-						fileName = args[0]
-						args = args[1:]
-					}
-					configPath = fileName
+	configPath := os.Getenv(envPrefix + flagNameToEnvName(configFileFlagName))
+	if len(args) > 0 {
+		if arg, ok := strings.CutPrefix(args[0], "-"); ok {
+			arg, _ = strings.CutPrefix(arg, "-")
+			flagName, value, ok := strings.Cut(arg, "=")
+			if flagName == configFileFlagName {
+				args = args[1:]
+				if !ok && len(args) == 0 {
+					return fmt.Errorf("flagenv: missing arguments to -%s", configFileFlagName)
 				}
+				fileName := value
+				if !ok {
+					// -config path
+					fileName = args[0]
+					args = args[1:]
+				}
+				configPath = fileName
 			}
 		}
-		if configPath != "" {
-			flagsFromFile, envVarsFromFile, err = loadConfigFile(configPath)
-			if err != nil {
-				return fmt.Errorf("flagenv: failed to load config file: %v", err)
-			}
+	}
+	if configPath != "" {
+		flagsFromFile, envVarsFromFile, err = loadConfigFile(configPath)
+		if err != nil {
+			return fmt.Errorf("flagenv: failed to load config file: %v", err)
 		}
 	}
 
@@ -60,7 +54,7 @@ func Parse(
 	}
 
 	fs.VisitAll(func(f *flag.Flag) {
-		name := envVarPrefix + flagNameToEnvName(f.Name)
+		name := envPrefix + flagNameToEnvName(f.Name)
 		if envVars != nil {
 			envVars[name] = false
 		}
