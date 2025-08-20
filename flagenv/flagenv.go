@@ -9,25 +9,25 @@ import (
 	"strings"
 )
 
-const configFileFlagName = "config"
+const configFlagName = "config"
 
 func Parse(fs *flag.FlagSet, args []string, envPrefix string) error {
 	var (
 		flagsFromFile   []string
 		envVarsFromFile map[string]string
-		envVars         map[string]bool
+		envVarsFromEnv  map[string]bool
 		err             error
 	)
 
-	configPath := os.Getenv(envPrefix + flagNameToEnvName(configFileFlagName))
+	configPath := os.Getenv(envPrefix + flagNameToEnvName(configFlagName))
 	if len(args) > 0 {
 		if arg, ok := strings.CutPrefix(args[0], "-"); ok {
 			arg, _ = strings.CutPrefix(arg, "-")
 			flagName, value, ok := strings.Cut(arg, "=")
-			if flagName == configFileFlagName {
+			if flagName == configFlagName {
 				args = args[1:]
 				if !ok && len(args) == 0 {
-					return fmt.Errorf("flagenv: missing arguments to -%s", configFileFlagName)
+					return fmt.Errorf("flagenv: missing arguments to -%s", configFlagName)
 				}
 				fileName := value
 				if !ok {
@@ -46,32 +46,33 @@ func Parse(fs *flag.FlagSet, args []string, envPrefix string) error {
 		}
 	}
 
-	if envVarsFromFile != nil {
-		envVars = make(map[string]bool)
+	detectUndefinedEnvVars := envVarsFromFile != nil
+	if detectUndefinedEnvVars {
+		envVarsFromEnv = make(map[string]bool)
 		for name := range envVarsFromFile {
-			envVars[name] = true
+			envVarsFromEnv[name] = true
 		}
 	}
 
 	fs.VisitAll(func(f *flag.Flag) {
 		name := envPrefix + flagNameToEnvName(f.Name)
-		if envVars != nil {
-			envVars[name] = false
+		if detectUndefinedEnvVars {
+			envVarsFromEnv[name] = false
 		}
 		if env := cmp.Or(os.Getenv(name), envVarsFromFile[name]); env != "" {
 			flagsFromFile = append(flagsFromFile, fmt.Sprintf("-%s=%s", f.Name, env))
 		}
 	})
 
-	if envVars != nil {
-		var unknown []string
-		for name, notFound := range envVars {
+	if detectUndefinedEnvVars {
+		var undefined []string
+		for name, notFound := range envVarsFromEnv {
 			if notFound {
-				unknown = append(unknown, name)
+				undefined = append(undefined, name)
 			}
 		}
-		if len(unknown) > 0 {
-			return fmt.Errorf("flagenv: unknown env vars: %v", unknown)
+		if len(undefined) > 0 {
+			return fmt.Errorf("flagenv: undefined env vars: %v", undefined)
 		}
 	}
 
