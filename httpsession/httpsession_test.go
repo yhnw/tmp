@@ -349,7 +349,7 @@ func TestID(t *testing.T) {
 }
 
 func TestMiddlewareRace(t *testing.T) {
-	synctest.Run(func() {
+	synctest.Test(t, func(t *testing.T) {
 		var errhCalled bool
 		errh := func(w http.ResponseWriter, r *http.Request, err error) {
 			if err.Error() == "httpsession: active session alreadly exists" {
@@ -390,6 +390,7 @@ func TestMiddlewareRace(t *testing.T) {
 		if !errhCalled {
 			t.Error("errorHandler was not called")
 		}
+		time.Sleep(1 * time.Millisecond)
 	})
 }
 
