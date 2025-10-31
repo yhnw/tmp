@@ -49,7 +49,7 @@ func TestMiddleware(t *testing.T) {
 			sess.N++
 		case "/renewid":
 			sess := session.Get(r.Context())
-			if err := session.Renew(r.Context(), strconv.Itoa(sess.N)); err != nil {
+			if err := session.RenewID(r.Context(), strconv.Itoa(sess.N)); err != nil {
 				t.Fatal(err)
 			}
 		case "/delete":
@@ -285,7 +285,7 @@ func TestGetAfterRenew(t *testing.T) {
 	session := New[testSession]()
 
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := session.Renew(r.Context(), ""); err != nil {
+		if err := session.Renew(r.Context()); err != nil {
 			t.Fatal(err)
 		}
 		session.Get(r.Context())
@@ -304,7 +304,7 @@ func TestRenewUpdateAbsoluteDeadline(t *testing.T) {
 	record := new(Record[testSession])
 	record.ID = "oldID"
 	ctx = session.newContextWithRecord(ctx, record)
-	session.Renew(ctx, "newID")
+	session.RenewID(ctx, "newID")
 	if record.ID != "newID" {
 		t.Errorf("got %v; want newID", record.ID)
 	}
@@ -321,7 +321,7 @@ func TestRenewDelete(t *testing.T) {
 	var oldID string
 	h := session.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		oldID = session.recordFromContext(r.Context()).ID
-		if err := session.Renew(r.Context(), "newid"); err != nil {
+		if err := session.RenewID(r.Context(), "newid"); err != nil {
 			t.Fatal(err)
 		}
 		session.Get(r.Context())

@@ -301,20 +301,24 @@ func (m *SessionStore[T]) ID(ctx context.Context) string {
 
 func (m *SessionStore[T]) Delete(ctx context.Context) error {
 	r := m.recordFromContext(ctx)
+	r.setBit(recordDeleted, true)
 	if err := m.Store.Delete(ctx, r.ID); err != nil {
 		return err
 	}
-	r.setBit(recordDeleted, true)
 	r.setBit(recordModified, true)
 	return nil
 }
 
-// It is caller's responsibility to choose a unique id.
+func (m *SessionStore[T]) Renew(ctx context.Context) error {
+	return m.RenewID(ctx, "")
+}
 
-func (m *SessionStore[T]) Renew(ctx context.Context, id string) error {
+// It is caller's responsibility to choose a unique id.
+func (m *SessionStore[T]) RenewID(ctx context.Context, id string) error {
 	r := m.recordFromContext(ctx)
 	err := m.Store.Delete(ctx, r.ID)
 	if err != nil {
+		r.setBit(recordDeleted, true)
 		return err
 	}
 
