@@ -176,7 +176,7 @@ type sessionSaver[T any] struct {
 
 func (w *sessionSaver[T]) Write(b []byte) (int, error) {
 	if w.failed {
-		panic("httpsession: (ResponseWriter).Write was called after a call to ErrorHandler")
+		return 0, errors.New("httpsession: (ResponseWriter).Write was called after a call to ErrorHandler")
 	}
 	if !w.done {
 		if err := w.mw.save(w.req.Context(), w.ResponseWriter); err != nil {
@@ -191,7 +191,8 @@ func (w *sessionSaver[T]) Write(b []byte) (int, error) {
 
 func (w *sessionSaver[T]) WriteHeader(code int) {
 	if w.failed {
-		panic("httpsession: (ResponseWriter).WriteHeader was called after a call to ErrorHandler")
+		slog.Error("httpsession: (ResponseWriter).WriteHeader was called after a call to ErrorHandler")
+		return
 	}
 	if !w.done {
 		if err := w.mw.save(w.req.Context(), w.ResponseWriter); err != nil {
