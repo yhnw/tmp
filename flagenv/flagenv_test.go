@@ -305,6 +305,15 @@ func TestParseLoadFileFromEnv(t *testing.T) {
 			`,
 		wantFlag: "🔑",
 	})
+	// should error
+	run(t, testFunc, "", testCase{
+		envPrefix: "PREFIX_",
+		config: `
+			PREFIX_ACCESS_KEY=foo
+			-access-key=bar
+			`,
+		wantFlag: "foo",
+	})
 }
 
 func TestParseLoadFile(t *testing.T) {
